@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>设置</title>
+    <style>
+        :root {
+            --bg: #0f1115;
+            --panel: #181b22;
+            --text: #e9ecf2;
+            --muted: #9aa3b5;
+            --accent: #7c5dff;
+            --border: #262b34;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: 'Noto Sans CJK SC', 'Microsoft YaHei', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+        }
+
+        .panel {
+            max-width: 420px;
+            margin: 0 auto;
+            padding: 20px 24px;
+            background: var(--panel);
+            min-height: 100vh;
+        }
+
+        h1 {
+            margin: 0 0 12px 0;
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        p.desc {
+            margin: 0 0 20px 0;
+            color: var(--muted);
+            font-size: 13px;
+        }
+
+        label {
+            display: block;
+            margin: 12px 0 6px 0;
+            font-size: 13px;
+        }
+
+        input[type="text"],
+        input[type="number"] {
+            width: 100%;
+            padding: 10px 12px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: #0c0e12;
+            color: var(--text);
+            font-size: 14px;
+            outline: none;
+        }
+
+        input[type="number"]::-webkit-inner-spin-button,
+        input[type="number"]::-webkit-outer-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .row {
+            display: flex;
+            gap: 10px;
+        }
+
+        .row .field {
+            flex: 1;
+        }
+
+        .inline-action {
+            display: grid;
+            grid-template-columns: 1fr auto;
+            gap: 10px;
+        }
+
+        button {
+            padding: 10px 14px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            background: #1f2330;
+            color: var(--text);
+            font-size: 14px;
+            cursor: pointer;
+            transition: background 0.2s ease, transform 0.2s ease;
+        }
+
+        button:hover {
+            background: #262b3a;
+        }
+
+        button:active {
+            transform: translateY(1px);
+        }
+
+        .actions {
+            margin-top: 18px;
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .muted {
+            color: var(--muted);
+            font-size: 12px;
+            margin-top: 4px;
+        }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h1>Live2D 设置</h1>
+        <p class="desc">配置模型与窗口参数，重启不丢失。</p>
+        <form id="settings-form">
+            <label for="model-path">模型文件 (model.json)</label>
+            <div class="inline-action">
+                <input id="model-path" type="text" placeholder="选择模型文件" readonly>
+                <button type="button" id="btn-browse">选择</button>
+            </div>
+            <div class="muted">模型路径将被持久化。</div>
+
+            <label for="model-scale">模型缩放 (0.5 - 2)</label>
+            <input id="model-scale" type="number" min="0.5" max="2" step="0.1" placeholder="1.0">
+
+            <label style="display: flex; align-items: center; gap: 8px; margin-top: 16px;">
+                <input id="auto-hide" type="checkbox" style="width: auto;">
+                <span>穿透模式下鼠标移入变透明</span>
+            </label>
+            <div class="muted">启用后，在点击穿透模式下鼠标移入窗口时降低透明度，避免干扰。</div>
+
+            <label for="hover-opacity">鼠标移入透明度 (<span id="opacity-value">10</span>%)</label>
+            <input id="hover-opacity" type="range" min="0" max="100" step="5" value="10" style="width: 100%; cursor: pointer;">
+            <div class="muted">控制鼠标移入时模型的可见度，0% = 完全透明，100% = 完全不透明。</div>
+
+            <div class="row">
+                <div class="field">
+                    <label for="window-width">窗口宽度</label>
+                    <input id="window-width" type="number" min="200" max="1600" step="10" placeholder="350">
+                </div>
+                <div class="field">
+                    <label for="window-height">窗口高度</label>
+                    <input id="window-height" type="number" min="200" max="1600" step="10" placeholder="600">
+                </div>
+            </div>
+
+            <div class="row">
+                <div class="field">
+                    <label for="window-x">窗口位置 X</label>
+                    <input id="window-x" type="number" step="1" placeholder="自动">
+                </div>
+                <div class="field">
+                    <label for="window-y">窗口位置 Y</label>
+                    <input id="window-y" type="number" step="1" placeholder="自动">
+                </div>
+            </div>
+
+            <div class="actions">
+                <button type="button" id="btn-cancel">取消</button>
+                <button type="submit" id="btn-save">保存</button>
+            </div>
+        </form>
+    </div>
+    <script src="scripts/settings.js"></script>
+</body>
+</html>

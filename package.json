@@ -1,0 +1,39 @@
+{
+  "name": "live2d-desktop-gnome",
+  "version": "1.0.0",
+  "description": "Live2D Desktop Widget for Gnome 42",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder --linux"
+  },
+  "keywords": [
+    "live2d",
+    "desktop",
+    "gnome",
+    "widget"
+  ],
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.9.1"
+  },
+  "build": {
+    "productName": "Live2D-Desktop",
+    "appId": "com.live2d.desktop",
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage"
+        }
+      ],
+      "category": "Utility",
+      "icon": "assets"
+    },
+    "directories": {
+      "output": "dist"
+    }
+  }
+}

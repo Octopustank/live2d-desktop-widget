@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Live2D Desktop</title>
+    <link rel="stylesheet" href="styles/main.css">
+    <!-- Live2D Cubism 2.x SDK -->
+    <script src="lib/live2d.min.js"></script>
+</head>
+<body>
+    <!-- Live2D 容器 -->
+    <div id="live2d-container" class="live2d-container">
+        <canvas id="live2d-canvas" class="live2d-canvas"></canvas>
+    </div>
+    
+    <!-- 消息提示框 -->
+    <div id="message-box" class="message-box">
+        <span id="message-text">你好呀~</span>
+    </div>
+    
+    <!-- 工具栏 -->
+    <div id="toolbar" class="toolbar">
+        <button id="btn-switch-model" class="tool-btn" title="切换模型">🔄</button>
+        <button id="btn-screenshot" class="tool-btn" title="截图">📷</button>
+        <button id="btn-settings" class="tool-btn" title="设置">⚙️</button>
+    </div>
+    
+    <script src="scripts/live2d-renderer.js"></script>
+    <script src="scripts/app.js"></script>
+</body>
+</html>
