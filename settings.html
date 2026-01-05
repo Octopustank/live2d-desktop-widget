@@ -273,10 +273,15 @@
             <h2>📍 位置设置</h2>
             
             <div class="section">
-                <div class="section-title">当前显示器信息</div>
+                <div class="section-title">目标显示器</div>
+                <select id="display-select" style="margin-bottom: 12px;">
+                    <option value="">加载中...</option>
+                </select>
+                <div class="muted" style="margin-bottom: 12px;">选择要显示窗口的显示器。</div>
+                
                 <div class="display-info" id="display-info">
                     <div class="row-info">
-                        <span class="label">分辨率：</span>
+                        <span class="label">有效分辨率：</span>
                         <span class="value" id="info-resolution">加载中...</span>
                     </div>
                     <div class="row-info">

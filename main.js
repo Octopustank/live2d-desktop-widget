@@ -236,12 +236,25 @@ function stopMouseTracking() {
     }
 }
 
-function applyWindowSettings() {
+function applyWindowSettings(targetFingerprint = null) {
     if (!mainWindow || !userConfig) return;
     
     // 如果有 DisplayManager，使用其计算的位置
     if (displayManager) {
-        const newBounds = displayManager.recalculateWindowBounds(mainWindow.getBounds());
+        let newBounds;
+        
+        if (targetFingerprint) {
+            // 移动到指定显示器
+            newBounds = displayManager.calculateBoundsForDisplay(targetFingerprint);
+            if (!newBounds) {
+                console.log('[Window] Target display not found, using current');
+                newBounds = displayManager.recalculateWindowBounds(mainWindow.getBounds());
+            }
+        } else {
+            // 使用当前显示器
+            newBounds = displayManager.recalculateWindowBounds(mainWindow.getBounds());
+        }
+        
         console.log('[Window] Applying settings with DisplayManager:', newBounds);
         mainWindow.setBounds(newBounds);
         
@@ -388,12 +401,29 @@ function setupDisplayListeners() {
                         });
                     }
                     
-                    // 同时通知设置窗口刷新显示信息
-                    if (settingsWindow && settingsWindow.webContents) {
-                        settingsWindow.webContents.send('display-info-updated', displayInfo);
-                    }
+                    // 通知设置窗口刷新显示信息和列表
+                    notifySettingsWindowDisplayChange();
                 }
+            } else if (event === 'display-added' || event === 'display-removed') {
+                // 显示器增减时也通知设置窗口
+                console.log(`[Display] ${event}`);
+                notifySettingsWindowDisplayChange();
             }
+        });
+    }
+}
+
+/**
+ * 通知设置窗口显示器信息变化
+ */
+function notifySettingsWindowDisplayChange() {
+    if (settingsWindow && settingsWindow.webContents) {
+        const displayInfo = displayManager?.getCurrentDisplayInfo(mainWindow?.getBounds());
+        const allDisplays = displayManager?.getAllDisplays();
+        
+        settingsWindow.webContents.send('display-info-updated', {
+            displayInfo,
+            allDisplays
         });
     }
 }
@@ -458,12 +488,18 @@ function setupIPC() {
     ipcMain.handle('get-config-with-display', () => {
         const config = userConfig || getDefaultConfig();
         let displayInfo = null;
+        let allDisplays = null;
         
         if (displayManager) {
-            displayInfo = displayManager.getCurrentDisplayInfo(mainWindow?.getBounds());
+            // 使用主窗口的实际位置来确定当前显示器
+            const windowBounds = mainWindow?.getBounds();
+            displayInfo = displayManager.getCurrentDisplayInfo(windowBounds);
+            allDisplays = displayManager.getAllDisplays();
+            
+            console.log(`[Settings] Window at (${windowBounds?.x}, ${windowBounds?.y}) => Display ${displayInfo.fingerprint}`);
         }
         
-        return { config, displayInfo };
+        return { config, displayInfo, allDisplays };
     });
 
     ipcMain.handle('select-model', async () => {
@@ -495,6 +531,8 @@ function setupIPC() {
         };
         
         // 处理显示设置（锚点和偏移）
+        let targetFingerprint = null;
+        
         if (displayManager && payload.displaySettings) {
             const { fingerprint, anchor, offsetX, offsetY } = payload.displaySettings;
             
@@ -511,6 +549,13 @@ function setupIPC() {
                 });
                 
                 merged.displayProfiles = displayManager.getProfilesToSave();
+                
+                // 检查是否切换到了不同的显示器
+                const currentDisplayInfo = displayManager.getCurrentDisplayInfo(mainWindow?.getBounds());
+                if (currentDisplayInfo.fingerprint !== fingerprint) {
+                    console.log('[Config] Display changed:', currentDisplayInfo.fingerprint, '=>', fingerprint);
+                    targetFingerprint = fingerprint;
+                }
             }
         } else if (displayManager && (payload.windowWidth || payload.windowHeight)) {
             // 仅更新窗口大小（兼容旧逻辑）
@@ -528,7 +573,7 @@ function setupIPC() {
         console.log('[Config] Saved');
         userConfig = merged;
         saveConfig(userConfig);
-        applyWindowSettings();
+        applyWindowSettings(targetFingerprint);
         if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('config-updated', userConfig);
         }

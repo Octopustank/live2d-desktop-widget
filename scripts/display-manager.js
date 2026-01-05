@@ -139,6 +139,31 @@ class DisplayManager {
             this.log('Loaded display profiles:', Object.keys(savedProfiles).length, 'profiles');
         }
     }
+    
+    /**
+     * 获取所有显示器信息
+     */
+    getAllDisplays() {
+        const displays = screen.getAllDisplays();
+        return displays.map(display => ({
+            id: display.id,
+            fingerprint: this.generateDisplayFingerprint(display),
+            logicalWidth: display.workAreaSize.width,
+            logicalHeight: display.workAreaSize.height,
+            scaleFactor: display.scaleFactor,
+            bounds: display.bounds,
+            workArea: display.workArea,
+            isPrimary: display.id === screen.getPrimaryDisplay().id
+        }));
+    }
+    
+    /**
+     * 根据位置获取显示器
+     */
+    getDisplayAtPosition(x, y) {
+        const display = screen.getDisplayNearestPoint({ x, y });
+        return this.getCurrentDisplayInfo({ x, y, width: 1, height: 1 });
+    }
 
     /**
      * 获取可保存的档案数据
@@ -506,7 +531,21 @@ class DisplayManager {
      * 获取初始窗口位置（程序启动时）
      */
     getInitialWindowBounds(savedConfig = null) {
-        const displayInfo = this.getCurrentDisplayInfo();
+        // 如果有保存的窗口位置，使用它来确定对应的显示器
+        let displayInfo;
+        if (savedConfig && Number.isFinite(savedConfig.windowX) && Number.isFinite(savedConfig.windowY)) {
+            const savedBounds = {
+                x: savedConfig.windowX,
+                y: savedConfig.windowY,
+                width: savedConfig.windowWidth || 350,
+                height: savedConfig.windowHeight || 600
+            };
+            displayInfo = this.getCurrentDisplayInfo(savedBounds);
+            this.log('Detected display from saved position:', displayInfo.fingerprint);
+        } else {
+            displayInfo = this.getCurrentDisplayInfo();
+        }
+        
         const fingerprint = displayInfo.fingerprint;
         
         // 检查是否已有该显示器的档案（且包含有效的偏移量设置）
@@ -567,6 +606,47 @@ class DisplayManager {
     recalculateWindowBounds(currentBounds = null) {
         const displayInfo = this.getCurrentDisplayInfo(currentBounds);
         const profile = this.getDisplayProfile(displayInfo.fingerprint);
+        
+        return this.calculateWindowBounds(displayInfo, profile);
+    }
+    
+    /**
+     * 根据指定的显示器 fingerprint 计算窗口位置
+     * 用于将窗口移动到其他显示器
+     */
+    calculateBoundsForDisplay(targetFingerprint) {
+        // 找到目标显示器
+        const displays = screen.getAllDisplays();
+        let targetDisplay = null;
+        
+        for (const display of displays) {
+            const fp = this.generateDisplayFingerprint(display);
+            if (fp === targetFingerprint) {
+                targetDisplay = display;
+                break;
+            }
+        }
+        
+        if (!targetDisplay) {
+            this.log('Target display not found:', targetFingerprint);
+            return null;
+        }
+        
+        // 构建显示器信息
+        const displayInfo = {
+            id: targetDisplay.id,
+            fingerprint: targetFingerprint,
+            logicalWidth: targetDisplay.workAreaSize.width,
+            logicalHeight: targetDisplay.workAreaSize.height,
+            physicalWidth: targetDisplay.bounds.width * targetDisplay.scaleFactor,
+            physicalHeight: targetDisplay.bounds.height * targetDisplay.scaleFactor,
+            scaleFactor: targetDisplay.scaleFactor,
+            workArea: targetDisplay.workArea,
+            bounds: targetDisplay.bounds
+        };
+        
+        const profile = this.getDisplayProfile(targetFingerprint);
+        this.log(`Moving to display: ${targetFingerprint} (${displayInfo.logicalWidth}x${displayInfo.logicalHeight})`);
         
         return this.calculateWindowBounds(displayInfo, profile);
     }

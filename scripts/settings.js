@@ -16,6 +16,7 @@ const cancelButton = document.getElementById('btn-cancel');
 const resetButton = document.getElementById('btn-reset');
 const previewWidget = document.getElementById('preview-widget');
 const previewBox = document.getElementById('preview-box');
+const displaySelect = document.getElementById('display-select');
 
 // 显示器信息元素
 const infoResolution = document.getElementById('info-resolution');
@@ -29,6 +30,8 @@ const anchorButtons = document.querySelectorAll('.anchor-btn[data-anchor]');
 let currentAnchor = 'bottom_right';
 let currentDisplayInfo = null;
 let currentFingerprint = null;
+let allDisplays = [];
+let currentConfig = null;
 
 // 锚点名称映射
 const anchorNames = {
@@ -39,11 +42,15 @@ const anchorNames = {
     'center': '居中'
 };
 
-function populate(config, displayInfo) {
+function populate(config, displayInfo, displays) {
     console.log('[Settings] Populating with config:', config);
-    console.log('[Settings] Display info:', displayInfo);
+    console.log('[Settings] Current display:', displayInfo);
+    console.log('[Settings] All displays:', displays);
     
     if (!config) return;
+    
+    currentConfig = config;
+    allDisplays = displays || [];
     
     // 基本设置
     if (config.modelPath) modelPathInput.value = config.modelPath;
@@ -58,27 +65,77 @@ function populate(config, displayInfo) {
         opacityValueSpan.textContent = percentage;
     }
     
+    // 填充显示器选择器
+    populateDisplaySelector(displayInfo);
+    
     // 显示器信息
-    if (displayInfo) {
-        currentDisplayInfo = displayInfo;
-        currentFingerprint = displayInfo.fingerprint;
-        
-        infoResolution.textContent = `${displayInfo.logicalWidth} × ${displayInfo.logicalHeight}`;
-        infoScale.textContent = `${Math.round(displayInfo.scaleFactor * 100)}%`;
-        infoFingerprint.textContent = displayInfo.fingerprint;
-    }
+    updateDisplayInfo(displayInfo);
     
     // 位置设置（从显示档案获取）
-    if (config.displayProfiles && currentFingerprint) {
-        const profile = config.displayProfiles[currentFingerprint];
-        if (profile) {
-            currentAnchor = profile.anchor || 'bottom_right';
-            if (Number.isFinite(profile.offsetX)) offsetXInput.value = profile.offsetX;
-            if (Number.isFinite(profile.offsetY)) offsetYInput.value = profile.offsetY;
-        }
-    }
+    loadProfileForDisplay(displayInfo?.fingerprint);
     
     // 更新锚点按钮状态
+    updateAnchorButtons();
+    updatePreview();
+}
+
+function populateDisplaySelector(currentDisplay) {
+    displaySelect.innerHTML = '';
+    
+    if (allDisplays.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = '无法获取显示器列表';
+        displaySelect.appendChild(opt);
+        return;
+    }
+    
+    allDisplays.forEach((display, index) => {
+        const opt = document.createElement('option');
+        opt.value = display.fingerprint;
+        const primary = display.isPrimary ? ' (主)' : '';
+        // 显示物理分辨率（更稳定的标识）
+        const physW = display.bounds?.width || display.logicalWidth;
+        const physH = display.bounds?.height || display.logicalHeight;
+        opt.textContent = `显示器 ${index + 1}${primary}: ${physW}×${physH}`;
+        
+        if (currentDisplay && display.fingerprint === currentDisplay.fingerprint) {
+            opt.selected = true;
+        }
+        
+        displaySelect.appendChild(opt);
+    });
+}
+
+function updateDisplayInfo(displayInfo) {
+    if (!displayInfo) return;
+    
+    currentDisplayInfo = displayInfo;
+    currentFingerprint = displayInfo.fingerprint;
+    
+    infoResolution.textContent = `${displayInfo.logicalWidth} × ${displayInfo.logicalHeight}`;
+    infoScale.textContent = `${Math.round(displayInfo.scaleFactor * 100)}%`;
+    infoFingerprint.textContent = displayInfo.fingerprint;
+}
+
+function loadProfileForDisplay(fingerprint) {
+    if (!fingerprint || !currentConfig) return;
+    
+    currentFingerprint = fingerprint;
+    
+    // 从配置中加载该显示器的位置设置
+    if (currentConfig.displayProfiles && currentConfig.displayProfiles[fingerprint]) {
+        const profile = currentConfig.displayProfiles[fingerprint];
+        currentAnchor = profile.anchor || 'bottom_right';
+        offsetXInput.value = Number.isFinite(profile.offsetX) ? profile.offsetX : -20;
+        offsetYInput.value = Number.isFinite(profile.offsetY) ? profile.offsetY : -50;
+    } else {
+        // 使用默认值
+        currentAnchor = 'bottom_right';
+        offsetXInput.value = -20;
+        offsetYInput.value = -50;
+    }
+    
     updateAnchorButtons();
     updatePreview();
 }
@@ -149,8 +206,35 @@ function toNumber(value) {
 
 async function init() {
     const result = await ipcRenderer.invoke('get-config-with-display');
-    populate(result.config, result.displayInfo);
+    populate(result.config, result.displayInfo, result.allDisplays);
 }
+
+// 显示器选择器变化
+displaySelect.addEventListener('change', () => {
+    const selectedFingerprint = displaySelect.value;
+    const selectedDisplay = allDisplays.find(d => d.fingerprint === selectedFingerprint);
+    
+    if (selectedDisplay) {
+        // 先保存当前显示器的设置到 currentConfig（避免切换时丢失）
+        if (currentFingerprint && currentConfig) {
+            if (!currentConfig.displayProfiles) {
+                currentConfig.displayProfiles = {};
+            }
+            if (!currentConfig.displayProfiles[currentFingerprint]) {
+                currentConfig.displayProfiles[currentFingerprint] = {};
+            }
+            // 保存当前编辑的设置
+            currentConfig.displayProfiles[currentFingerprint].anchor = currentAnchor;
+            currentConfig.displayProfiles[currentFingerprint].offsetX = toNumber(offsetXInput.value) || 0;
+            currentConfig.displayProfiles[currentFingerprint].offsetY = toNumber(offsetYInput.value) || 0;
+            console.log('[Settings] Saved current profile before switch:', currentFingerprint, currentConfig.displayProfiles[currentFingerprint]);
+        }
+        
+        console.log('[Settings] Switched to display:', selectedFingerprint);
+        updateDisplayInfo(selectedDisplay);
+        loadProfileForDisplay(selectedFingerprint);
+    }
+});
 
 // 锚点按钮点击
 anchorButtons.forEach(btn => {
@@ -227,8 +311,16 @@ ipcRenderer.on('config-saved', () => {
 });
 
 // 显示器信息更新（当显示器配置变化时自动刷新）
-ipcRenderer.on('display-info-updated', (event, displayInfo) => {
-    console.log('[Settings] Display info updated:', displayInfo);
+ipcRenderer.on('display-info-updated', (event, data) => {
+    console.log('[Settings] Display info updated:', data);
+    
+    const { displayInfo, allDisplays: newDisplays } = data;
+    
+    // 更新显示器列表
+    if (newDisplays) {
+        allDisplays = newDisplays;
+        populateDisplaySelector(displayInfo);
+    }
     
     if (displayInfo) {
         currentDisplayInfo = displayInfo;
@@ -242,12 +334,16 @@ ipcRenderer.on('display-info-updated', (event, displayInfo) => {
         // 刷新预览
         updatePreview();
         
-        // 显示提示
-        const infoPanel = document.querySelector('.info-panel');
-        if (infoPanel) {
-            infoPanel.style.borderColor = '#4a9eff';
+        // 显示提示（高亮显示器选择区域）
+        const section = displaySelect.closest('.section');
+        if (section) {
+            section.style.borderColor = '#4a9eff';
+            section.style.borderWidth = '1px';
+            section.style.borderStyle = 'solid';
             setTimeout(() => {
-                infoPanel.style.borderColor = '';
+                section.style.borderColor = '';
+                section.style.borderWidth = '';
+                section.style.borderStyle = '';
             }, 2000);
         }
     }

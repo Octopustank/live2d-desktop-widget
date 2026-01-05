@@ -243,15 +243,26 @@ live2d-desktop/
   - 动态 DPI 调整 / Dynamic DPI adjustment
   - 分辨率变化 / Resolution changes
 
-> **缩放比例限制 / Scaling Limitation**
+> ⚠️ **缩放比例限制 / Scaling Limitation**
 > 
-> Electron/Chromium 在 Linux 环境下仅能识别 **整数倍缩放**（100%、200% 等）。
-> 分数缩放（如 125%、150%、175%）会被近似为最接近的整数倍，可能导致显示器指纹变化或位置计算偏差。
+> Electron/Chromium 在 Linux（尤其是 X11/Wayland）环境下仅能识别 **整数倍缩放**（100%、200% 等）。
+> 
+> **影响：**
+> - 分数缩放（如 125%、150%、175%）会被近似为最接近的整数倍
+> - 多显示器使用不同分数缩放时，可能显示相同的缩放比例（如都显示 200%）
+> - 设置界面显示的"有效分辨率"可能与系统设置不一致
+> - 显示器选择器显示的是物理分辨率，更便于识别
+> 
 > 这是 Chromium 的已知限制，非本应用问题。
 >
-> Electron/Chromium on Linux only recognizes **integer scaling factors** (100%, 200%, etc.).
-> Fractional scaling (e.g., 125%, 150%, 175%) is approximated to the nearest integer, which may cause
-> display fingerprint changes or position calculation deviations.
+> Electron/Chromium on Linux (especially X11/Wayland) only recognizes **integer scaling factors** (100%, 200%, etc.).
+> 
+> **Impact:**
+> - Fractional scaling (e.g., 125%, 150%, 175%) is approximated to the nearest integer
+> - Multiple monitors with different fractional scaling may show the same scale factor
+> - "Effective resolution" in settings may differ from system settings
+> - Display selector shows physical resolution for easier identification
+> 
 > This is a known Chromium limitation, not an issue with this application.
 
 ------
