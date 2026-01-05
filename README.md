@@ -43,12 +43,14 @@ This project is **focused solely on Live2D itself**.
 
 - **多显示器配置档案系统** — 每个显示器独立保存窗口位置和大小
   Multi-monitor profile system with independent settings per display
+- **显示器选择器** — 可在设置界面中手动选择目标显示器，窗口会自动移动
+  Display selector in settings for manual target selection
 - **锚点定位系统** — 基于屏幕边角的智能定位（右下、右上、左下、左上、居中）
   Anchor-based positioning (bottom-right, top-right, bottom-left, top-left, center)
 - **DPI 缩放自适应** — 自动适配显示器缩放比例变化
   Automatic DPI scaling adaptation
-- **热插拔支持** — 自动响应显示器添加/移除/分辨率变化
-  Hot-plug support with automatic repositioning
+- **热插拔支持** — 自动响应显示器添加/移除/分辨率变化，设置界面实时刷新
+  Hot-plug support with automatic repositioning and live settings update
 - **完整的调试日志** — 控制台输出详细的显示器信息和位置计算过程
   Comprehensive debug logging for display metrics and positioning
 
@@ -112,14 +114,18 @@ npm start
    Right-click the system tray icon and select “Settings”
 3. 在设置窗口中可进行以下配置：
    Available options in the settings window:
+   - **目标显示器** — 选择窗口显示的屏幕（多显示器环境）
+     Target display selection (multi-monitor setup)
    - **模型选择**（`model.json`）
      Model selection (`model.json`)
    - **模型缩放**（0.5–2.0）
      Model scaling (0.5–2.0)
    - **窗口尺寸**
      Window width and height
-   - **窗口位置**（留空自动定位）
-     Window position (auto if empty)
+   - **锚点位置** — 9宫格定位点（替代原坐标设置）
+     Anchor position (9-point grid, replaces manual coordinates)
+   - **偏移量** — 相对锚点的微调位置
+     Offset from anchor point
    - **自动变透明**（点击穿透模式）
      Auto transparency in click-through mode
    - **透明度控制**（0–100%）
@@ -244,26 +250,27 @@ live2d-desktop/
   - 分辨率变化 / Resolution changes
 
 > ⚠️ **缩放比例限制 / Scaling Limitation**
-> 
-> Electron/Chromium 在 Linux（尤其是 X11/Wayland）环境下仅能识别 **整数倍缩放**（100%、200% 等）。
-> 
-> **影响：**
-> - 分数缩放（如 125%、150%、175%）会被近似为最接近的整数倍
-> - 多显示器使用不同分数缩放时，可能显示相同的缩放比例（如都显示 200%）
-> - 设置界面显示的"有效分辨率"可能与系统设置不一致
-> - 显示器选择器显示的是物理分辨率，更便于识别
-> 
-> 这是 Chromium 的已知限制，非本应用问题。
 >
-> Electron/Chromium on Linux (especially X11/Wayland) only recognizes **integer scaling factors** (100%, 200%, etc.).
-> 
+> Electron/Chromium 在 Linux 环境下仅能识别 **整数倍缩放**（100%、200% 等）。
+>
+> **影响：**
+>
+> - 分数缩放（如 125%、150%、175%）会被读取为整数倍
+> - 多显示器使用不同分数缩放时，可能显示相同的缩放比例（如都显示 200%）
+> - 无法获取真实物理分辨率，只能获取缩放后的有效分辨率
+> - 设置界面显示的分辨率和缩放比例可能与系统设置不一致
+>
+> 这是 Chromium 的已知限制，非本应用问题。应用已尽可能适配此限制。
+>
+> Electron/Chromium on Linux  only recognizes **integer scaling factors** (100%, 200%, etc.).
+>
 > **Impact:**
-> - Fractional scaling (e.g., 125%, 150%, 175%) is approximated to the nearest integer
+> - Fractional scaling (e.g., 125%, 150%, 175%) is approximated to the integer
 > - Multiple monitors with different fractional scaling may show the same scale factor
-> - "Effective resolution" in settings may differ from system settings
-> - Display selector shows physical resolution for easier identification
-> 
-> This is a known Chromium limitation, not an issue with this application.
+> - Cannot get actual physical resolution, only scaled effective resolution
+> - Resolution and scaling shown in settings may differ from system settings
+>
+> This is a known Chromium limitation, not an issue with this application. The app adapts to this limitation as best as possible.
 
 ------
 
@@ -299,27 +306,6 @@ npm start
 # 打包 Linux AppImage / Build Linux AppImage
 npm run dist
 ```
-
-------
-
-## 更新日志 / Changelog
-
-**v2.0 — 显示器管理系统**
-
-**新增功能：**
-
-- 多显示器配置档案系统
-- 基于锚点的窗口定位机制
-- 设置界面实时位置预览
-- DPI 缩放自适应
-- 显示器热插拔支持
-- 完整的显示器与位置调试日志
-
-**改进内容：**
-
-- 设置界面结构优化，参数配置更直观
-- 窗口位置管理稳定性提升
-- Canvas 尺寸调整逻辑优化
 
 ------
 

@@ -94,10 +94,8 @@ function populateDisplaySelector(currentDisplay) {
         const opt = document.createElement('option');
         opt.value = display.fingerprint;
         const primary = display.isPrimary ? ' (主)' : '';
-        // 显示物理分辨率（更稳定的标识）
-        const physW = display.bounds?.width || display.logicalWidth;
-        const physH = display.bounds?.height || display.logicalHeight;
-        opt.textContent = `显示器 ${index + 1}${primary}: ${physW}×${physH}`;
+        // 显示缩放后的有效尺寸（Chromium 限制无法获取真实物理分辨率）
+        opt.textContent = `显示器 ${index + 1}${primary}: ${display.logicalWidth}×${display.logicalHeight} (有效)`;
         
         if (currentDisplay && display.fingerprint === currentDisplay.fingerprint) {
             opt.selected = true;
