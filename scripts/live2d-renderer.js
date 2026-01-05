@@ -13,13 +13,53 @@ class Live2DRenderer {
         
         // 渲染参数
         this.dpr = window.devicePixelRatio || 1;
+        this.lastDisplayWidth = 0;
+        this.lastDisplayHeight = 0;
         
         // 鼠标追踪
         this.mouseX = 0;
         this.mouseY = 0;
         
+        // 调试模式
+        this.debugMode = true;
+        
         // 初始化 Canvas 尺寸
         this.resize();
+        
+        // 监听 DPI 变化
+        this.setupDPRListener();
+    }
+    
+    /**
+     * 调试日志输出
+     */
+    log(...args) {
+        if (this.debugMode) {
+            console.log('[Live2D Renderer]', ...args);
+        }
+    }
+    
+    /**
+     * 设置 DPI 变化监听
+     */
+    setupDPRListener() {
+        // 使用 matchMedia 监听 DPI 变化
+        const updateDPR = () => {
+            const newDpr = window.devicePixelRatio || 1;
+            if (newDpr !== this.dpr) {
+                this.log('=== DPI Changed ===');
+                this.log('  Old DPR:', this.dpr);
+                this.log('  New DPR:', newDpr);
+                this.log('===================');
+                
+                this.dpr = newDpr;
+                this.resize();
+            }
+        };
+        
+        // 使用 matchMedia 进行精确监听
+        const mediaQuery = window.matchMedia(`(resolution: ${this.dpr}dppx)`);
+        mediaQuery.addEventListener('change', updateDPR);
     }
     
     /**
@@ -32,14 +72,48 @@ class Live2DRenderer {
         const displayWidth = this.canvas.clientWidth;
         const displayHeight = this.canvas.clientHeight;
         
+        // 检测尺寸是否真正变化
+        const sizeChanged = displayWidth !== this.lastDisplayWidth || 
+                           displayHeight !== this.lastDisplayHeight;
+        
+        this.log('=== Canvas Resize ===');
+        this.log('  Display Size:', `${displayWidth}x${displayHeight}`);
+        this.log('  Device Pixel Ratio:', this.dpr);
+        this.log('  Size Changed:', sizeChanged);
+        
         // Canvas 内部分辨率 = 显示尺寸 × DPR
         // 但 live2d.js 对高 DPI 的处理方式是在内部乘以 Quality 系数
         // 为了兼容，我们这里设置为 2x（与参考项目的 Quality=2 一致）
         const quality = 2;
-        this.canvas.width = displayWidth * quality;
-        this.canvas.height = displayHeight * quality;
+        const newWidth = displayWidth * quality;
+        const newHeight = displayHeight * quality;
         
-        console.log(`[Live2D] Canvas resized: ${this.canvas.width}x${this.canvas.height}, Quality: ${quality}`);
+        this.log('  Quality Factor:', quality);
+        this.log('  Canvas Internal Size:', `${newWidth}x${newHeight}`);
+        
+        // 只有在尺寸真正变化时才更新 Canvas
+        if (this.canvas.width !== newWidth || this.canvas.height !== newHeight) {
+            this.canvas.width = newWidth;
+            this.canvas.height = newHeight;
+            this.log('  Canvas Updated: YES');
+        } else {
+            this.log('  Canvas Updated: NO (size unchanged)');
+        }
+        
+        this.lastDisplayWidth = displayWidth;
+        this.lastDisplayHeight = displayHeight;
+        
+        this.log('=====================');
+    }
+    
+    /**
+     * 强制重新加载模型（用于尺寸变化后刷新）
+     */
+    reloadModel() {
+        if (this.modelPath && this.isLoaded) {
+            this.log('Reloading model due to size change...');
+            this.loadModel(this.modelPath);
+        }
     }
     
     /**

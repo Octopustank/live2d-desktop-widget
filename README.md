@@ -39,6 +39,21 @@ This project is **focused solely on Live2D itself**.
 
 ------
 
+### 智能显示器管理 / Smart Display Management
+
+- **多显示器配置档案系统** — 每个显示器独立保存窗口位置和大小
+  Multi-monitor profile system with independent settings per display
+- **锚点定位系统** — 基于屏幕边角的智能定位（右下、右上、左下、左上、居中）
+  Anchor-based positioning (bottom-right, top-right, bottom-left, top-left, center)
+- **DPI 缩放自适应** — 自动适配显示器缩放比例变化
+  Automatic DPI scaling adaptation
+- **热插拔支持** — 自动响应显示器添加/移除/分辨率变化
+  Hot-plug support with automatic repositioning
+- **完整的调试日志** — 控制台输出详细的显示器信息和位置计算过程
+  Comprehensive debug logging for display metrics and positioning
+
+------
+
 ### 桌面集成 / Desktop Integration
 
 - 系统托盘集成
@@ -52,14 +67,19 @@ This project is **focused solely on Live2D itself**.
 
 ### 配置与体验 / Configuration & UX
 
-- 可视化设置窗口
-  Visual settings window
-- 支持模型选择、缩放、窗口尺寸、透明度配置
-  Model selection, scaling, window size and opacity control
+- **可视化设置窗口** — 图形化界面配置所有参数
+  Visual settings window with GUI controls
+- **位置预览功能** — 实时预览窗口在屏幕上的位置
+  Live position preview in settings
+- 支持模型选择、缩放、窗口尺寸、位置、透明度配置
+  Model selection, scaling, window size, position and opacity control
+
+<img src="./Settings_demo.png" alt="设置界面" style="zoom: 25%;" />
+
 - 配置持久化（重启后自动恢复）
   Persistent configuration across restarts
-- 针对 Gnome 42 优化缩放适配
-  Optimized scaling for Gnome 42
+- 针对 Gnome 42 / Wayland 优化
+  Optimized for Gnome 42 / Wayland
 
 ------
 
@@ -69,8 +89,6 @@ This project is **focused solely on Live2D itself**.
   Cross-platform desktop application framework
 - **Live2D Cubism SDK 2.x** — Live2D V2 模型渲染
   Live2D Cubism 2.x model rendering
-- **WebGL** — 硬件加速渲染
-  Hardware-accelerated rendering via WebGL
 
 ------
 
@@ -136,8 +154,6 @@ npm start
 
 支持 **Live2D Cubism 2.x** 模型，目录结构示例：
 
-Supports **Live2D Cubism 2.x** models with the following directory structure:
-
 ```
 model/
 ├── model.json
@@ -153,18 +169,19 @@ model/
 
 ```
 live2d-desktop/
-├── main.js                 # Electron main process
-├── index.html              # Main window
-├── settings.html           # Settings window
+├── main.js                    # Electron main process
+├── index.html                 # Main window
+├── settings.html              # Settings window
 ├── package.json
 ├── scripts/
-│   ├── app.js              # Application logic
-│   ├── live2d-renderer.js  # Live2D renderer
-│   └── settings.js         # Settings logic
+│   ├── app.js                 # Application logic
+│   ├── live2d-renderer.js     # Live2D renderer
+│   ├── settings.js            # Settings logic
+│   └── display-manager.js     # Display manager (NEW)
 ├── styles/
 │   └── main.css
 ├── lib/
-│   └── live2d.min.js       # Live2D SDK
+│   └── live2d.min.js          # Live2D SDK
 └── assets/
     └── icon.png
 ```
@@ -174,18 +191,91 @@ live2d-desktop/
 ## 配置文件 / Configuration
 
 配置文件默认路径：
-Configuration file location:
 
 ```
-~/.config/live2d-desktop-gnome/config.json
+~/.config/live2d-desktop/config.json
+```
+
+配置文件包含以下内容：
+
+- 模型路径和缩放设置 / Model path and scaling settings
+- 窗口尺寸 / Window dimensions
+- 透明度设置 / Opacity settings
+- **显示器配置档案** (displayProfiles) — 每个显示器的独立位置配置
+  Display profiles — Independent position settings per display
+
+示例配置
+
+```json
+{
+  "modelPath": "/path/to/model.json",
+  "modelScale": 1,
+  "windowWidth": 350,
+  "windowHeight": 600,
+  "autoHideOnHover": false,
+  "hoverOpacity": 0.1,
+  "displayProfiles": {
+    "3f4a1b2c8d9e": {
+      "anchor": "bottom_right",
+      "offsetX": -20,
+      "offsetY": -50,
+      "width": 350,
+      "height": 600
+    }
+  }
+}
 ```
 
 ------
 
 ## 适配说明 / Compatibility
 
-- 测试环境：Ubuntu 22.04.5 LTS + Gnome 42.9
-- Tested on Ubuntu 22.04.5 LTS with Gnome 42.9
+- **测试环境** / Tested on:
+  - Ubuntu 22.04.5 LTS + Gnome 42.9
+  - X11
+  - 多显示器环境 / Multi-monitor setups
+  - 不同 DPI 缩放比例 / Various DPI scaling factors
+
+- **支持的显示器配置** / Supported display configurations:
+  - 单显示器 / Single monitor
+  - 多显示器 / Multiple monitors
+  - 热插拔 / Hot-plug
+  - 动态 DPI 调整 / Dynamic DPI adjustment
+  - 分辨率变化 / Resolution changes
+
+> **缩放比例限制 / Scaling Limitation**
+> 
+> Electron/Chromium 在 Linux 环境下仅能识别 **整数倍缩放**（100%、200% 等）。
+> 分数缩放（如 125%、150%、175%）会被近似为最接近的整数倍，可能导致显示器指纹变化或位置计算偏差。
+> 这是 Chromium 的已知限制，非本应用问题。
+>
+> Electron/Chromium on Linux only recognizes **integer scaling factors** (100%, 200%, etc.).
+> Fractional scaling (e.g., 125%, 150%, 175%) is approximated to the nearest integer, which may cause
+> display fingerprint changes or position calculation deviations.
+> This is a known Chromium limitation, not an issue with this application.
+
+------
+
+## 调试与日志 / Debugging & Logging
+
+应用启动后会在控制台输出详细的调试信息：
+
+The application outputs detailed debug information to the console:
+
+- **显示器信息** — 分辨率、缩放因子、物理尺寸等
+  Display information — Resolution, scale factor, physical dimensions
+- **位置计算** — 锚点、偏移量、边界检查过程
+  Position calculation — Anchor point, offset, boundary check
+- **Canvas 调整** — DPI 适配和尺寸变化
+  Canvas adjustment — DPI adaptation and size changes
+- **显示器变化** — 热插拔和指标变化事件
+  Display changes — Hot-plug and metrics change events
+
+查看调试日志 / View debug logs:
+1. 系统托盘 → 开发者工具
+   System tray → Developer Tools
+2. 查看 Console 标签
+   Check Console tab
 
 ------
 
@@ -199,8 +289,26 @@ npm start
 npm run dist
 ```
 
-> 主窗口控制台：系统托盘 → 开发者工具
-> Main window console: System tray → Developer Tools
+------
+
+## 更新日志 / Changelog
+
+**v2.0 — 显示器管理系统**
+
+**新增功能：**
+
+- 多显示器配置档案系统
+- 基于锚点的窗口定位机制
+- 设置界面实时位置预览
+- DPI 缩放自适应
+- 显示器热插拔支持
+- 完整的显示器与位置调试日志
+
+**改进内容：**
+
+- 设置界面结构优化，参数配置更直观
+- 窗口位置管理稳定性提升
+- Canvas 尺寸调整逻辑优化
 
 ------
 

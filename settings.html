@@ -11,6 +11,7 @@
             --muted: #9aa3b5;
             --accent: #7c5dff;
             --border: #262b34;
+            --section-bg: #12151a;
         }
 
         * { box-sizing: border-box; }
@@ -24,7 +25,7 @@
         }
 
         .panel {
-            max-width: 420px;
+            max-width: 480px;
             margin: 0 auto;
             padding: 20px 24px;
             background: var(--panel);
@@ -35,6 +36,15 @@
             margin: 0 0 12px 0;
             font-size: 18px;
             font-weight: 600;
+        }
+
+        h2 {
+            margin: 20px 0 12px 0;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--accent);
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 6px;
         }
 
         p.desc {
@@ -50,7 +60,8 @@
         }
 
         input[type="text"],
-        input[type="number"] {
+        input[type="number"],
+        select {
             width: 100%;
             padding: 10px 12px;
             border-radius: 8px;
@@ -59,6 +70,15 @@
             color: var(--text);
             font-size: 14px;
             outline: none;
+        }
+
+        select {
+            cursor: pointer;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%239aa3b5' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            padding-right: 36px;
         }
 
         input[type="number"]::-webkit-inner-spin-button,
@@ -113,56 +133,211 @@
             font-size: 12px;
             margin-top: 4px;
         }
+
+        .section {
+            background: var(--section-bg);
+            border-radius: 8px;
+            padding: 12px 14px;
+            margin: 12px 0;
+        }
+
+        .section-title {
+            font-size: 12px;
+            color: var(--muted);
+            margin-bottom: 10px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .display-info {
+            background: #0c0e12;
+            border-radius: 6px;
+            padding: 10px 12px;
+            font-size: 12px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            color: var(--muted);
+            margin-bottom: 12px;
+        }
+
+        .display-info .row-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 4px 0;
+        }
+
+        .display-info .label {
+            color: var(--muted);
+        }
+
+        .display-info .value {
+            color: var(--text);
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 12px 0;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            width: auto;
+        }
+
+        .anchor-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 6px;
+            margin: 10px 0;
+        }
+
+        .anchor-btn {
+            padding: 8px;
+            font-size: 12px;
+            background: #0c0e12;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .anchor-btn:hover {
+            background: #1a1d24;
+        }
+
+        .anchor-btn.active {
+            background: var(--accent);
+            border-color: var(--accent);
+            color: white;
+        }
+
+        .anchor-btn.placeholder {
+            visibility: hidden;
+        }
+
+        .preview-box {
+            position: relative;
+            width: 100%;
+            height: 80px;
+            background: #0c0e12;
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            margin: 10px 0;
+        }
+
+        .preview-widget {
+            position: absolute;
+            width: 20px;
+            height: 30px;
+            background: var(--accent);
+            border-radius: 3px;
+            transition: all 0.3s ease;
+        }
     </style>
 </head>
 <body>
     <div class="panel">
         <h1>Live2D 设置</h1>
-        <p class="desc">配置模型与窗口参数，重启不丢失。</p>
+        <p class="desc">配置模型与窗口参数，所有设置自动保存。</p>
+        
         <form id="settings-form">
+            <!-- 模型设置 -->
+            <h2>📦 模型设置</h2>
+            
             <label for="model-path">模型文件 (model.json)</label>
             <div class="inline-action">
                 <input id="model-path" type="text" placeholder="选择模型文件" readonly>
                 <button type="button" id="btn-browse">选择</button>
             </div>
-            <div class="muted">模型路径将被持久化。</div>
+            <div class="muted">选择 Live2D 模型的 model.json 文件。</div>
 
             <label for="model-scale">模型缩放 (0.5 - 2)</label>
             <input id="model-scale" type="number" min="0.5" max="2" step="0.1" placeholder="1.0">
 
-            <label style="display: flex; align-items: center; gap: 8px; margin-top: 16px;">
-                <input id="auto-hide" type="checkbox" style="width: auto;">
-                <span>穿透模式下鼠标移入变透明</span>
-            </label>
-            <div class="muted">启用后，在点击穿透模式下鼠标移入窗口时降低透明度，避免干扰。</div>
-
-            <label for="hover-opacity">鼠标移入透明度 (<span id="opacity-value">10</span>%)</label>
-            <input id="hover-opacity" type="range" min="0" max="100" step="5" value="10" style="width: 100%; cursor: pointer;">
-            <div class="muted">控制鼠标移入时模型的可见度，0% = 完全透明，100% = 完全不透明。</div>
-
+            <!-- 窗口尺寸 -->
+            <h2>📐 窗口尺寸</h2>
+            
             <div class="row">
                 <div class="field">
-                    <label for="window-width">窗口宽度</label>
+                    <label for="window-width">宽度 (像素)</label>
                     <input id="window-width" type="number" min="200" max="1600" step="10" placeholder="350">
                 </div>
                 <div class="field">
-                    <label for="window-height">窗口高度</label>
+                    <label for="window-height">高度 (像素)</label>
                     <input id="window-height" type="number" min="200" max="1600" step="10" placeholder="600">
                 </div>
             </div>
 
-            <div class="row">
-                <div class="field">
-                    <label for="window-x">窗口位置 X</label>
-                    <input id="window-x" type="number" step="1" placeholder="自动">
-                </div>
-                <div class="field">
-                    <label for="window-y">窗口位置 Y</label>
-                    <input id="window-y" type="number" step="1" placeholder="自动">
+            <!-- 位置设置 -->
+            <h2>📍 位置设置</h2>
+            
+            <div class="section">
+                <div class="section-title">当前显示器信息</div>
+                <div class="display-info" id="display-info">
+                    <div class="row-info">
+                        <span class="label">分辨率：</span>
+                        <span class="value" id="info-resolution">加载中...</span>
+                    </div>
+                    <div class="row-info">
+                        <span class="label">缩放比例：</span>
+                        <span class="value" id="info-scale">加载中...</span>
+                    </div>
+                    <div class="row-info">
+                        <span class="label">显示器 ID：</span>
+                        <span class="value" id="info-fingerprint">加载中...</span>
+                    </div>
                 </div>
             </div>
 
+            <label>锚点位置</label>
+            <div class="muted" style="margin-bottom: 8px;">选择窗口相对于屏幕的定位基准点。</div>
+            
+            <div class="anchor-grid">
+                <button type="button" class="anchor-btn" data-anchor="top_left">↖ 左上</button>
+                <button type="button" class="anchor-btn placeholder"></button>
+                <button type="button" class="anchor-btn" data-anchor="top_right">↗ 右上</button>
+                <button type="button" class="anchor-btn placeholder"></button>
+                <button type="button" class="anchor-btn" data-anchor="center">◉ 居中</button>
+                <button type="button" class="anchor-btn placeholder"></button>
+                <button type="button" class="anchor-btn" data-anchor="bottom_left">↙ 左下</button>
+                <button type="button" class="anchor-btn placeholder"></button>
+                <button type="button" class="anchor-btn active" data-anchor="bottom_right">↘ 右下</button>
+            </div>
+
+            <div class="preview-box" id="preview-box">
+                <div class="preview-widget" id="preview-widget"></div>
+            </div>
+
+            <div class="row">
+                <div class="field">
+                    <label for="offset-x">水平偏移 (像素)</label>
+                    <input id="offset-x" type="number" step="10" value="-20" placeholder="-20">
+                    <div class="muted">负值向内，正值向外</div>
+                </div>
+                <div class="field">
+                    <label for="offset-y">垂直偏移 (像素)</label>
+                    <input id="offset-y" type="number" step="10" value="-50" placeholder="-50">
+                    <div class="muted">负值向上，正值向下</div>
+                </div>
+            </div>
+
+            <!-- 透明度设置 -->
+            <h2>👁️ 透明度设置</h2>
+
+            <label class="checkbox-label">
+                <input id="auto-hide" type="checkbox">
+                <span>穿透模式下鼠标移入变透明</span>
+            </label>
+            <div class="muted">启用后，在点击穿透模式下鼠标移入窗口时降低透明度。</div>
+
+            <label for="hover-opacity">鼠标移入透明度 (<span id="opacity-value">10</span>%)</label>
+            <input id="hover-opacity" type="range" min="0" max="100" step="5" value="10" style="width: 100%; cursor: pointer;">
+            <div class="muted">控制鼠标移入时模型的可见度。</div>
+
+            <!-- 操作按钮 -->
             <div class="actions">
+                <button type="button" id="btn-reset">重置位置</button>
                 <button type="button" id="btn-cancel">取消</button>
                 <button type="submit" id="btn-save">保存</button>
             </div>

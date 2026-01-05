@@ -29,10 +29,12 @@ const config = {
 let state = {
     mouseX: 0,
     mouseY: 0,
-    scaleFactor: window.devicePixelRatio || 1
+    scaleFactor: window.devicePixelRatio || 1,
+    lastDisplayInfo: null  // 上次显示器信息（用于对比）
 };
 
 let isClickThrough = false;
+let resizeDebounceTimer = null;  // 用于防抖的定时器
 
 // ==================== DOM 元素 ====================
 const elements = {
@@ -79,12 +81,28 @@ function showMessage(text, timeout = config.messageTimeout) {
  * 更新 Canvas 尺寸以适配 DPI
  * 注意：live2d.js 内部会管理渲染，这里只做初始设置
  */
-function updateCanvasSize() {
-    // live2d.js 使用 Quality=2 的方式处理 DPI
-    // 我们在 live2d-renderer.js 中已经设置了 canvas 尺寸
-    // 这里不再重复设置，避免冲突
+function updateCanvasSize(forceReload = false) {
+    console.log('[Canvas] === Updating Canvas Size ===');
+    console.log('[Canvas]   Window innerSize:', window.innerWidth, 'x', window.innerHeight);
+    console.log('[Canvas]   DevicePixelRatio:', window.devicePixelRatio);
+    console.log('[Canvas]   ForceReload:', forceReload);
     
-    console.log(`[Canvas] Size: ${elements.canvas.width}x${elements.canvas.height}`);
+    // 通知 Live2D 渲染器调整尺寸
+    if (window.live2dRenderer) {
+        window.live2dRenderer.resize();
+        
+        // 如果需要强制重载（尺寸变化后）
+        if (forceReload) {
+            console.log('[Canvas]   Triggering model reload...');
+            // 延迟重载，确保 Canvas 尺寸已应用
+            setTimeout(() => {
+                window.live2dRenderer.reloadModel();
+            }, 100);
+        }
+    }
+    
+    console.log('[Canvas]   Current Canvas Size:', elements.canvas.width, 'x', elements.canvas.height);
+    console.log('[Canvas] ================================');
 }
 
 function applyConfig(newConfig = {}) {
@@ -94,14 +112,21 @@ function applyConfig(newConfig = {}) {
     const incomingHeight = Number.isFinite(Number(newConfig.windowHeight)) ? Number(newConfig.windowHeight) : config.windowHeight;
     const incomingAutoHide = typeof newConfig.autoHideOnHover === 'boolean' ? newConfig.autoHideOnHover : config.autoHideOnHover;
     
-    console.log('[App] Applying config:', {
-        modelPath: incomingPath,
-        modelScale: incomingScale,
-        windowSize: `${incomingWidth}x${incomingHeight}`,
-        autoHideOnHover: incomingAutoHide
-    });
+    // 检测尺寸是否变化
+    const sizeChanged = incomingWidth !== config.windowWidth || incomingHeight !== config.windowHeight;
+    
+    console.log('[App] === Applying Config ===');
+    console.log('[App]   modelPath:', incomingPath);
+    console.log('[App]   modelScale:', incomingScale);
+    console.log('[App]   windowSize:', `${incomingWidth}x${incomingHeight}`);
+    console.log('[App]   sizeChanged:', sizeChanged);
+    console.log('[App]   autoHideOnHover:', incomingAutoHide);
+    console.log('[App] ========================');
     
     const shouldReloadModel = incomingPath && incomingPath !== config.modelPath;
+    const previousWidth = config.windowWidth;
+    const previousHeight = config.windowHeight;
+    
     config.modelPath = incomingPath;
     config.modelScale = incomingScale;
     config.windowWidth = incomingWidth;
@@ -114,6 +139,10 @@ function applyConfig(newConfig = {}) {
     
     if (shouldReloadModel) {
         loadModel(config.modelPath);
+    } else if (sizeChanged) {
+        // 尺寸变化但模型路径不变，需要更新 Canvas 并重载模型
+        console.log('[App] Window size changed, updating canvas and reloading model...');
+        updateCanvasSize(true);  // 强制重载
     }
 }
 
@@ -282,11 +311,51 @@ function loadModel(modelPath) {
 // ==================== IPC 通信 ====================
 
 function initIPC() {
-    // 监听显示器变化
+    // 监听显示器变化（来自 DisplayManager）
     ipcRenderer.on('display-changed', (event, data) => {
-        console.log('[Display] Changed:', data);
+        console.log('[Display] === Display Changed Event ===');
+        console.log('[Display]   Scale Factor:', data.scaleFactor);
+        console.log('[Display]   Work Area:', data.workArea);
+        console.log('[Display]   Needs Canvas Resize:', data.needsCanvasResize);
+        
+        if (data.displayInfo) {
+            console.log('[Display]   Logical Size:', data.displayInfo.logicalWidth, 'x', data.displayInfo.logicalHeight);
+            console.log('[Display]   Physical Size:', data.displayInfo.physicalWidth, 'x', data.displayInfo.physicalHeight);
+        }
+        
+        if (data.newBounds) {
+            console.log('[Display]   New Window Bounds:', data.newBounds);
+        }
+        
+        console.log('[Display] ================================');
+        
         state.scaleFactor = data.scaleFactor;
-        updateCanvasSize();
+        state.lastDisplayInfo = data.displayInfo;
+        
+        // 如果需要更新 Canvas
+        if (data.needsCanvasResize) {
+            updateCanvasSize(true);  // 强制重载模型
+        } else {
+            updateCanvasSize(false);
+        }
+    });
+
+    // 监听窗口边界变化
+    ipcRenderer.on('window-bounds-changed', (event, data) => {
+        console.log('[Window] === Bounds Changed Event ===');
+        console.log('[Window]   Bounds:', data.bounds);
+        console.log('[Window]   Needs Canvas Resize:', data.needsCanvasResize);
+        console.log('[Window] =================================');
+        
+        if (data.needsCanvasResize) {
+            // 使用防抖避免频繁更新
+            if (resizeDebounceTimer) {
+                clearTimeout(resizeDebounceTimer);
+            }
+            resizeDebounceTimer = setTimeout(() => {
+                updateCanvasSize(true);
+            }, 150);
+        }
     });
 
     ipcRenderer.on('config-updated', (event, cfg) => {
@@ -315,7 +384,10 @@ function initIPC() {
 // ==================== 初始化 ====================
 
 function init() {
-    console.log('[App] Initializing...');
+    console.log('[App] === Initializing ===');
+    console.log('[App]   Window Size:', window.innerWidth, 'x', window.innerHeight);
+    console.log('[App]   Device Pixel Ratio:', window.devicePixelRatio);
+    console.log('[App] ======================');
     
     // 更新 Canvas 尺寸
     updateCanvasSize();
@@ -328,14 +400,29 @@ function init() {
     
     // 监听窗口大小变化
     window.addEventListener('resize', () => {
-        updateCanvasSize();
+        console.log('[Window] Resize event triggered');
+        console.log('[Window]   New Size:', window.innerWidth, 'x', window.innerHeight);
+        
+        // 使用防抖避免频繁调用
+        if (resizeDebounceTimer) {
+            clearTimeout(resizeDebounceTimer);
+        }
+        resizeDebounceTimer = setTimeout(() => {
+            updateCanvasSize(false);  // 窗口大小变化时通常不需要重载模型
+        }, 100);
     });
     
     // 监听 DPI 变化
-    window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener('change', () => {
-        console.log('[DPI] Changed to:', window.devicePixelRatio);
-        state.scaleFactor = window.devicePixelRatio;
-        updateCanvasSize();
+    const currentDPR = window.devicePixelRatio;
+    window.matchMedia(`(resolution: ${currentDPR}dppx)`).addEventListener('change', () => {
+        const newDPR = window.devicePixelRatio;
+        console.log('[DPI] === Changed ===');
+        console.log('[DPI]   Old:', currentDPR);
+        console.log('[DPI]   New:', newDPR);
+        console.log('[DPI] ================');
+        
+        state.scaleFactor = newDPR;
+        updateCanvasSize(true);  // DPI 变化需要重载模型
     });
     
     // 显示欢迎消息

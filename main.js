@@ -13,6 +13,7 @@
 const { app, BrowserWindow, screen, Tray, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { DisplayManager, AnchorPoints, SizeMode } = require('./scripts/display-manager');
 
 // 全局变量
 let mainWindow = null;
@@ -21,15 +22,20 @@ let isClickThrough = false;
 let mouseTrackingInterval = null;
 let settingsWindow = null;
 let userConfig = null;
+let displayManager = null;
 
 function getDefaultConfig() {
     return {
         modelPath: '',
         modelScale: 1,
+        // 以下为遗留字段，用于兼容旧配置迁移
         windowWidth: 350,
         windowHeight: 600,
         windowX: null,
         windowY: null,
+        // 新的显示档案系统
+        displayProfiles: {},
+        // 其他设置
         autoHideOnHover: false,
         hoverOpacity: 0.1
     };
@@ -68,7 +74,9 @@ function saveConfig(config) {
  */
 function getScaleFactor() {
     const primaryDisplay = screen.getPrimaryDisplay();
-    return primaryDisplay.scaleFactor || 1;
+    const factor = primaryDisplay.scaleFactor || 1;
+    console.log(`[Display] ${primaryDisplay.workAreaSize.width}x${primaryDisplay.workAreaSize.height} @ ${factor * 100}%`);
+    return factor;
 }
 
 /**
@@ -76,21 +84,34 @@ function getScaleFactor() {
  */
 function createMainWindow() {
     const scaleFactor = getScaleFactor();
-    const primaryDisplay = screen.getPrimaryDisplay();
-    const workArea = primaryDisplay.workAreaSize;
     
-    const width = Math.max(200, userConfig?.windowWidth || 350);
-    const height = Math.max(200, userConfig?.windowHeight || 600);
-    const defaultX = workArea.width - width - 20;
-    const defaultY = workArea.height - height - 20;
-    const x = Number.isFinite(userConfig?.windowX) ? userConfig.windowX : defaultX;
-    const y = Number.isFinite(userConfig?.windowY) ? userConfig.windowY : defaultY;
+    // 初始化 DisplayManager
+    displayManager = new DisplayManager();
+    displayManager.debugMode = true;  // 启用调试输出
+    
+    // 加载保存的显示档案
+    if (userConfig && userConfig.displayProfiles) {
+        displayManager.loadProfiles(userConfig.displayProfiles);
+    }
+    
+    // 使用 DisplayManager 计算初始窗口位置
+    const initialBounds = displayManager.getInitialWindowBounds(userConfig);
+    
+    console.log('[Window] Initial bounds:', initialBounds);
+    
+    // 如果进行了旧配置迁移，清除旧的 windowX/windowY
+    if (displayManager.needsClearLegacyConfig()) {
+        console.log('[Config] Clearing legacy windowX/windowY after migration');
+        userConfig.windowX = null;
+        userConfig.windowY = null;
+        saveConfig(userConfig);
+    }
 
     mainWindow = new BrowserWindow({
-        width,
-        height,
-        x,
-        y,
+        width: initialBounds.width,
+        height: initialBounds.height,
+        x: initialBounds.x,
+        y: initialBounds.y,
         
         // 桌面摆件核心配置
         transparent: true,          // 背景透明
@@ -126,25 +147,34 @@ function createMainWindow() {
         stopMouseTracking();
     });
     
-    mainWindow.on('move', () => {
-        if (!userConfig) return;
-        const bounds = mainWindow.getBounds();
-        userConfig.windowX = bounds.x;
-        userConfig.windowY = bounds.y;
-        saveConfig(userConfig);
-    });
-    
+    // 注意：已移除窗口拖动功能，位置通过设置界面配置
+    // 窗口大小调整结束时（如果需要）
+    let resizeTimeout = null;
     mainWindow.on('resize', () => {
-        if (!userConfig) return;
-        const bounds = mainWindow.getBounds();
-        userConfig.windowWidth = bounds.width;
-        userConfig.windowHeight = bounds.height;
-        saveConfig(userConfig);
-    });
-    
-    // 监听渲染进程的拖拽请求
-    mainWindow.on('will-move', () => {
-        // 拖拽时可以正常移动
+        if (!userConfig || !displayManager) return;
+        
+        // 防抖
+        if (resizeTimeout) clearTimeout(resizeTimeout);
+        resizeTimeout = setTimeout(() => {
+            const bounds = mainWindow.getBounds();
+            console.log('[Window] Resize ended, new size:', bounds);
+            
+            const result = displayManager.handleWindowResizeEnd(bounds);
+            
+            userConfig.windowWidth = bounds.width;
+            userConfig.windowHeight = bounds.height;
+            userConfig.displayProfiles = displayManager.getProfilesToSave();
+            saveConfig(userConfig);
+            
+            // 通知渲染进程重新调整 Canvas
+            if (mainWindow && mainWindow.webContents) {
+                mainWindow.webContents.send('window-bounds-changed', {
+                    bounds,
+                    displayInfo: result.displayInfo,
+                    needsCanvasResize: true
+                });
+            }
+        }, 200);
     });
 }
 
@@ -208,11 +238,30 @@ function stopMouseTracking() {
 
 function applyWindowSettings() {
     if (!mainWindow || !userConfig) return;
+    
+    // 如果有 DisplayManager，使用其计算的位置
+    if (displayManager) {
+        const newBounds = displayManager.recalculateWindowBounds(mainWindow.getBounds());
+        console.log('[Window] Applying settings with DisplayManager:', newBounds);
+        mainWindow.setBounds(newBounds);
+        
+        // 通知渲染进程
+        if (mainWindow.webContents) {
+            mainWindow.webContents.send('window-bounds-changed', {
+                bounds: newBounds,
+                needsCanvasResize: true
+            });
+        }
+        return;
+    }
+    
+    // 回退到旧逻辑
     const bounds = mainWindow.getBounds();
     const width = Math.max(200, Math.floor(userConfig.windowWidth || bounds.width));
     const height = Math.max(200, Math.floor(userConfig.windowHeight || bounds.height));
     const x = Number.isFinite(userConfig.windowX) ? Math.floor(userConfig.windowX) : bounds.x;
     const y = Number.isFinite(userConfig.windowY) ? Math.floor(userConfig.windowY) : bounds.y;
+    console.log('[Window] Applying settings (legacy):', { x, y, width, height });
     mainWindow.setBounds({ width, height, x, y });
 }
 
@@ -306,22 +355,47 @@ function createTray() {
 
 /**
  * 监听显示器变化（Gnome 缩放适配）
+ * 使用 DisplayManager 进行智能响应
  */
 function setupDisplayListeners() {
-    screen.on('display-metrics-changed', (event, display, changedMetrics) => {
-        console.log('[Display] Metrics changed:', changedMetrics);
+    // 使用 DisplayManager 的监听器
+    if (displayManager) {
+        displayManager.setupDisplayListeners();
         
-        if (changedMetrics.includes('scaleFactor') || changedMetrics.includes('workArea')) {
-            // 通知渲染进程更新
-            if (mainWindow && mainWindow.webContents) {
-                mainWindow.webContents.send('display-changed', {
-                    scaleFactor: display.scaleFactor,
-                    workArea: display.workAreaSize
-                });
+        displayManager.addListener((event, data) => {
+            if (event === 'display-metrics-changed') {
+                const { display, changedMetrics, displayInfo } = data;
+                
+                console.log(`[Display] Metrics changed: ${changedMetrics.join(', ')}`);
+                
+                // 重新计算窗口位置
+                if (mainWindow) {
+                    const currentBounds = mainWindow.getBounds();
+                    const newBounds = displayManager.recalculateWindowBounds(currentBounds);
+                    
+                    console.log(`[Display] Repositioning: (${currentBounds.x},${currentBounds.y}) => (${newBounds.x},${newBounds.y})`);
+                    
+                    mainWindow.setBounds(newBounds);
+                    
+                    // 通知渲染进程
+                    if (mainWindow.webContents) {
+                        mainWindow.webContents.send('display-changed', {
+                            scaleFactor: display.scaleFactor,
+                            workArea: display.workAreaSize,
+                            displayInfo,
+                            newBounds,
+                            needsCanvasResize: true
+                        });
+                    }
+                    
+                    // 同时通知设置窗口刷新显示信息
+                    if (settingsWindow && settingsWindow.webContents) {
+                        settingsWindow.webContents.send('display-info-updated', displayInfo);
+                    }
+                }
             }
-            
-        }
-    });
+        });
+    }
 }
 
 function openSettingsWindow() {
@@ -330,9 +404,9 @@ function openSettingsWindow() {
         return;
     }
     settingsWindow = new BrowserWindow({
-        width: 440,
-        height: 520,
-        resizable: false,
+        width: 500,
+        height: 780,
+        resizable: true,
         minimizable: false,
         maximizable: false,
         title: '设置',
@@ -362,13 +436,7 @@ function setupIPC() {
         }
     });
     
-    // 窗口拖拽
-    ipcMain.on('window-drag', (event, { deltaX, deltaY }) => {
-        if (mainWindow) {
-            const [x, y] = mainWindow.getPosition();
-            mainWindow.setPosition(x + deltaX, y + deltaY);
-        }
-    });
+    // 注意：已移除窗口拖拽功能，位置通过设置界面配置
     
     // 设置点击穿透
     ipcMain.on('set-ignore-mouse', (event, ignore) => {
@@ -384,6 +452,18 @@ function setupIPC() {
 
     ipcMain.handle('get-config', () => {
         return userConfig || getDefaultConfig();
+    });
+
+    // 获取配置和显示器信息（用于设置界面）
+    ipcMain.handle('get-config-with-display', () => {
+        const config = userConfig || getDefaultConfig();
+        let displayInfo = null;
+        
+        if (displayManager) {
+            displayInfo = displayManager.getCurrentDisplayInfo(mainWindow?.getBounds());
+        }
+        
+        return { config, displayInfo };
     });
 
     ipcMain.handle('select-model', async () => {
@@ -408,12 +488,44 @@ function setupIPC() {
             modelScale: Number.isFinite(Number(payload.modelScale)) ? Number(payload.modelScale) : current.modelScale,
             windowWidth: Number.isFinite(Number(payload.windowWidth)) ? Number(payload.windowWidth) : current.windowWidth,
             windowHeight: Number.isFinite(Number(payload.windowHeight)) ? Number(payload.windowHeight) : current.windowHeight,
-            windowX: Number.isFinite(Number(payload.windowX)) ? Number(payload.windowX) : current.windowX,
-            windowY: Number.isFinite(Number(payload.windowY)) ? Number(payload.windowY) : current.windowY,
             autoHideOnHover: typeof payload.autoHideOnHover === 'boolean' ? payload.autoHideOnHover : current.autoHideOnHover,
-            hoverOpacity: Number.isFinite(Number(payload.hoverOpacity)) ? Math.max(0, Math.min(1, Number(payload.hoverOpacity))) : current.hoverOpacity
+            hoverOpacity: Number.isFinite(Number(payload.hoverOpacity)) ? Math.max(0, Math.min(1, Number(payload.hoverOpacity))) : current.hoverOpacity,
+            // 保留显示档案
+            displayProfiles: current.displayProfiles || {}
         };
-        console.log('[Config] Updated:', merged);
+        
+        // 处理显示设置（锚点和偏移）
+        if (displayManager && payload.displaySettings) {
+            const { fingerprint, anchor, offsetX, offsetY } = payload.displaySettings;
+            
+            if (fingerprint) {
+                console.log('[Config] Updating display profile:', fingerprint, { anchor, offsetX, offsetY });
+                
+                displayManager.updateDisplayProfile(fingerprint, {
+                    anchor: anchor || 'bottom_right',
+                    offsetX: Number.isFinite(offsetX) ? offsetX : -20,
+                    offsetY: Number.isFinite(offsetY) ? offsetY : -50,
+                    width: merged.windowWidth,
+                    height: merged.windowHeight,
+                    sizeMode: 'fixed'
+                });
+                
+                merged.displayProfiles = displayManager.getProfilesToSave();
+            }
+        } else if (displayManager && (payload.windowWidth || payload.windowHeight)) {
+            // 仅更新窗口大小（兼容旧逻辑）
+            const displayInfo = displayManager.getCurrentDisplayInfo(mainWindow?.getBounds());
+            
+            displayManager.updateDisplayProfile(displayInfo.fingerprint, {
+                width: merged.windowWidth,
+                height: merged.windowHeight,
+                sizeMode: 'fixed'
+            });
+            
+            merged.displayProfiles = displayManager.getProfilesToSave();
+        }
+        
+        console.log('[Config] Saved');
         userConfig = merged;
         saveConfig(userConfig);
         applyWindowSettings();
