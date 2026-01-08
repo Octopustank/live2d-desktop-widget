@@ -136,6 +136,25 @@ class Live2DRenderer {
         this.modelPath = modelPath;
         
         console.log('[Live2D] Loading model:', modelPath);
+
+        // 在调用底层库前预检 WebGL 可用性，避免误导性错误
+        const canvas = this.canvas || document.getElementById(this.canvasId);
+        let gl = null;
+        try {
+            if (canvas && canvas.getContext) {
+                gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+            }
+        } catch (e) {
+            gl = null;
+        }
+        if (!gl) {
+            console.error('[Live2D] WebGL context unavailable. Likely due to GPU/session change.');
+            this.isLoaded = false;
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('图形环境异常：WebGL 不可用。请重启程序后重试。', 8000);
+            }
+            return;
+        }
         
         // 使用 live2d.js 内置的 loadlive2d 函数
         // 参数: canvasId, modelPath, callback
@@ -148,9 +167,15 @@ class Live2DRenderer {
             } catch (e) {
                 console.error('[Live2D] Error loading model:', e);
                 this.isLoaded = false;
+                if (typeof window.showMessage === 'function') {
+                    window.showMessage('模型加载失败（WebGL/驱动可能异常）。请重启程序后重试。', 8000);
+                }
             }
         } else {
             console.error('[Live2D] loadlive2d function not found!');
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('加载器缺失：请重新启动程序。', 6000);
+            }
         }
     }
     

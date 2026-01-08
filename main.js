@@ -28,6 +28,8 @@ function getDefaultConfig() {
     return {
         modelPath: '',
         modelScale: 1,
+        // 性能/兼容性
+        hardwareAcceleration: true,
         // 以下为遗留字段，用于兼容旧配置迁移
         windowWidth: 350,
         windowHeight: 600,
@@ -67,6 +69,26 @@ function saveConfig(config) {
     } catch (e) {
         console.error('[Config] Failed to save config:', e);
     }
+}
+
+// 在应用就绪前尽早应用硬件加速设置
+// 注意：需要在 app.whenReady() 之前调用 app.disableHardwareAcceleration()
+try {
+    const earlyConfig = (function () {
+        const defaultConfig = getDefaultConfig();
+        const configPath = getConfigPath();
+        if (fs.existsSync(configPath)) {
+            const data = fs.readFileSync(configPath, 'utf-8');
+            return { ...defaultConfig, ...JSON.parse(data) };
+        }
+        return defaultConfig;
+    })();
+    if (earlyConfig && earlyConfig.hardwareAcceleration === false) {
+        console.log('[App] Hardware acceleration disabled by config');
+        app.disableHardwareAcceleration();
+    }
+} catch (e) {
+    console.warn('[App] Early hardware acceleration config load failed:', e);
 }
 
 /**
@@ -484,6 +506,13 @@ function setupIPC() {
         return userConfig || getDefaultConfig();
     });
 
+    // 渲染进程请求重启应用（用于切换硬件加速等需要重启的设置）
+    ipcMain.on('restart-app', () => {
+        console.log('[App] Restart requested from renderer');
+        app.relaunch();
+        app.exit(0);
+    });
+
     // 获取配置和显示器信息（用于设置界面）
     ipcMain.handle('get-config-with-display', () => {
         const config = userConfig || getDefaultConfig();
@@ -526,6 +555,7 @@ function setupIPC() {
             windowHeight: Number.isFinite(Number(payload.windowHeight)) ? Number(payload.windowHeight) : current.windowHeight,
             autoHideOnHover: typeof payload.autoHideOnHover === 'boolean' ? payload.autoHideOnHover : current.autoHideOnHover,
             hoverOpacity: Number.isFinite(Number(payload.hoverOpacity)) ? Math.max(0, Math.min(1, Number(payload.hoverOpacity))) : current.hoverOpacity,
+            hardwareAcceleration: typeof payload.hardwareAcceleration === 'boolean' ? payload.hardwareAcceleration : current.hardwareAcceleration,
             // 保留显示档案
             displayProfiles: current.displayProfiles || {}
         };

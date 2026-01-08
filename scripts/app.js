@@ -77,6 +77,9 @@ function showMessage(text, timeout = config.messageTimeout) {
     }, timeout);
 }
 
+// 暴露给其他模块使用的全局消息接口
+window.showMessage = showMessage;
+
 /**
  * 更新 Canvas 尺寸以适配 DPI
  * 注意：live2d.js 内部会管理渲染，这里只做初始设置

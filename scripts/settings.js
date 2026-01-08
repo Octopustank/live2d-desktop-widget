@@ -17,6 +17,7 @@ const resetButton = document.getElementById('btn-reset');
 const previewWidget = document.getElementById('preview-widget');
 const previewBox = document.getElementById('preview-box');
 const displaySelect = document.getElementById('display-select');
+const hardwareAccelCheckbox = document.getElementById('hardware-accel');
 
 // 显示器信息元素
 const infoResolution = document.getElementById('info-resolution');
@@ -32,6 +33,7 @@ let currentDisplayInfo = null;
 let currentFingerprint = null;
 let allDisplays = [];
 let currentConfig = null;
+let initialHardwareAcceleration = true;
 
 // 锚点名称映射
 const anchorNames = {
@@ -64,6 +66,10 @@ function populate(config, displayInfo, displays) {
         hoverOpacityInput.value = percentage;
         opacityValueSpan.textContent = percentage;
     }
+    // 硬件加速（默认开启）
+    const enabled = config.hardwareAcceleration !== false;
+    hardwareAccelCheckbox.checked = enabled;
+    initialHardwareAcceleration = enabled;
     
     // 填充显示器选择器
     populateDisplaySelector(displayInfo);
@@ -283,6 +289,7 @@ form.addEventListener('submit', (event) => {
         windowHeight: toNumber(windowHeightInput.value),
         autoHideOnHover: autoHideCheckbox.checked,
         hoverOpacity: toNumber(hoverOpacityInput.value) / 100,
+        hardwareAcceleration: hardwareAccelCheckbox.checked,
         // 位置设置
         displaySettings: {
             fingerprint: currentFingerprint,
@@ -306,6 +313,19 @@ ipcRenderer.on('config-saved', () => {
         saveBtn.textContent = originalText;
         saveBtn.style.background = '';
     }, 1500);
+
+    // 若硬件加速设置发生变化，提示并提供立即重启
+    const currentEnabled = hardwareAccelCheckbox.checked;
+    if (currentEnabled !== initialHardwareAcceleration) {
+        const shouldRestart = confirm('硬件加速设置已更改，需要重启应用才会生效。是否现在重启？');
+        if (shouldRestart) {
+            ipcRenderer.send('restart-app');
+        } else {
+            alert('请稍后手动重启应用以应用新设置。');
+        }
+        // 更新基准值，避免重复提示
+        initialHardwareAcceleration = currentEnabled;
+    }
 });
 
 // 显示器信息更新（当显示器配置变化时自动刷新）
