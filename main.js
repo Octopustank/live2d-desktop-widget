@@ -347,11 +347,19 @@ function createTray() {
         },
         { type: 'separator' },
         {
-            label: '重新加载',
+            label: '重新加载模型',
             click: () => {
                 if (mainWindow) {
                     mainWindow.reload();
                 }
+            }
+        },
+        {
+            label: '重新启动应用',
+            click: () => {
+                console.log('[App] Restart requested from tray menu');
+                app.relaunch();
+                app.exit(0);
             }
         },
         {

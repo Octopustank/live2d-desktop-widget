@@ -10,6 +10,7 @@ class Live2DRenderer {
         this.canvas = document.getElementById(canvasId);
         this.modelPath = '';
         this.isLoaded = false;
+        this.contextLost = false;
         
         // 渲染参数
         this.dpr = window.devicePixelRatio || 1;
@@ -28,6 +29,9 @@ class Live2DRenderer {
         
         // 监听 DPI 变化
         this.setupDPRListener();
+
+        // 监听 WebGL 上下文丢失/恢复
+        this.setupContextLostListener();
     }
     
     /**
@@ -60,6 +64,38 @@ class Live2DRenderer {
         // 使用 matchMedia 进行精确监听
         const mediaQuery = window.matchMedia(`(resolution: ${this.dpr}dppx)`);
         mediaQuery.addEventListener('change', updateDPR);
+    }
+
+    /**
+     * 监听 WebGL 上下文丢失与恢复
+     * 典型场景：锁屏/休眠后恢复、切换用户、GPU 驱动重置
+     */
+    setupContextLostListener() {
+        if (!this.canvas) return;
+
+        this.canvas.addEventListener('webglcontextlost', (event) => {
+            event.preventDefault(); // 允许后续 restore
+            this.contextLost = true;
+            this.isLoaded = false;
+            console.error('[Live2D] WebGL context lost (CONTEXT_LOST_WEBGL). Rendering suspended.');
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('图形环境丢失。请重启程序，或等待自动恢复（10s）。', 10000);
+            }
+        }, false);
+
+        this.canvas.addEventListener('webglcontextrestored', () => {
+            console.log('[Live2D] WebGL context restored. Attempting to reload model...');
+            this.contextLost = false;
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('图形环境已恢复，正在重新加载模型...', 3000);
+            }
+            // 尝试重新加载模型
+            if (this.modelPath) {
+                setTimeout(() => {
+                    this.loadModel(this.modelPath);
+                }, 500);
+            }
+        }, false);
     }
     
     /**
@@ -124,6 +160,15 @@ class Live2DRenderer {
     loadModel(modelPath) {
         if (!modelPath) {
             console.warn('[Live2D] No model path provided');
+            return;
+        }
+
+        // 若上下文已丢失，直接拒绝加载并提示
+        if (this.contextLost) {
+            console.warn('[Live2D] Cannot load model: WebGL context is lost.');
+            if (typeof window.showMessage === 'function') {
+                window.showMessage('图形环境仍不可用，请重启程序后重试。', 6000);
+            }
             return;
         }
         
