@@ -36,6 +36,9 @@ let state = {
 let isClickThrough = false;
 let resizeDebounceTimer = null;  // 用于防抖的定时器
 
+// 初始化全局 WebGL 上下文状态标志
+window.live2dContextLost = false;
+
 // ==================== DOM 元素 ====================
 const elements = {
     container: document.getElementById('live2d-container'),
@@ -157,11 +160,26 @@ let lastMouseY = 0;
 let idleTimer = null;
 const IDLE_TIMEOUT = 3000; // 3秒无移动进入空闲状态
 
+// 统一的鼠标追踪范围（像素），用于归一化坐标到 -1~1 范围
+// 使用相同的值避免本地/全局追踪切换时视线跳变
+const MOUSE_TRACK_RANGE = 300;
+
+// 标记本地鼠标事件是否活跃（鼠标在窗口内）
+// 用于避免全局追踪和本地追踪同时更新导致的跳变
+let isLocalMouseActive = false;
+let localMouseActiveTimer = null;
+
 function initMouseTracking() {
     // 监听全局鼠标移动（来自主进程的 screen.getCursorScreenPoint）
     ipcRenderer.on('global-mouse-move', (event, position) => {
         state.mouseX = position.screenX;
         state.mouseY = position.screenY;
+        
+        // 如果本地鼠标追踪活跃（鼠标在窗口内且非穿透模式），跳过全局追踪
+        // 这样可以避免两种追踪机制同时更新导致的视线跳变
+        if (isLocalMouseActive && !isClickThrough) {
+            return;
+        }
         
         // 检查是否有移动
         const hasMoved = Math.abs(position.screenX - lastMouseX) > 2 || 
@@ -184,9 +202,8 @@ function initMouseTracking() {
             
             // 更新 Live2D 模型视线
             // 将相对坐标转换为 live2d 期望的 -1 到 1 范围
-            const maxRange = 500; // 屏幕上的最大追踪距离（像素）
-            const normalizedX = Math.max(-1, Math.min(1, position.relativeX / maxRange));
-            const normalizedY = Math.max(-1, Math.min(1, -position.relativeY / maxRange)); // Y 轴翻转
+            const normalizedX = Math.max(-1, Math.min(1, position.relativeX / MOUSE_TRACK_RANGE));
+            const normalizedY = Math.max(-1, Math.min(1, -position.relativeY / MOUSE_TRACK_RANGE)); // Y 轴翻转
             
             if (typeof window.live2dSetPoint === 'function') {
                 window.live2dSetPoint(normalizedX, normalizedY);
@@ -194,11 +211,20 @@ function initMouseTracking() {
         }
     });
     
-    // 本地鼠标移动（窗口内）- 作为备用和更精确的追踪
+    // 本地鼠标移动（窗口内）- 非穿透模式下更精确的追踪
     document.addEventListener('mousemove', (e) => {
         // 获取窗口在屏幕上的位置
         state.mouseX = e.screenX;
         state.mouseY = e.screenY;
+        
+        // 标记本地鼠标活跃，延迟清除以覆盖全局追踪的更新周期
+        isLocalMouseActive = true;
+        if (localMouseActiveTimer) {
+            clearTimeout(localMouseActiveTimer);
+        }
+        localMouseActiveTimer = setTimeout(() => {
+            isLocalMouseActive = false;
+        }, 50); // 略长于全局追踪的更新周期 (16ms)
         
         // 重置空闲计时器
         if (idleTimer) {
@@ -218,13 +244,21 @@ function initMouseTracking() {
         const relativeX = e.clientX - centerX;
         const relativeY = e.clientY - centerY;
         
-        // 转换为 -1 到 1 范围
-        const maxRange = 200;
-        const normalizedX = Math.max(-1, Math.min(1, relativeX / maxRange));
-        const normalizedY = Math.max(-1, Math.min(1, -relativeY / maxRange));
+        // 转换为 -1 到 1 范围（使用与全局追踪相同的范围值）
+        const normalizedX = Math.max(-1, Math.min(1, relativeX / MOUSE_TRACK_RANGE));
+        const normalizedY = Math.max(-1, Math.min(1, -relativeY / MOUSE_TRACK_RANGE));
         
         if (typeof window.live2dSetPoint === 'function') {
             window.live2dSetPoint(normalizedX, normalizedY);
+        }
+    });
+    
+    // 鼠标离开窗口时清除本地活跃状态
+    document.addEventListener('mouseleave', () => {
+        isLocalMouseActive = false;
+        if (localMouseActiveTimer) {
+            clearTimeout(localMouseActiveTimer);
+            localMouseActiveTimer = null;
         }
     });
 }
@@ -375,6 +409,10 @@ function initIPC() {
     });
 
     ipcRenderer.on('set-model-opacity', (event, opacity) => {
+        // 当 WebGL 上下文丢失时，跳过不必要的更新和日志，避免日志猛增
+        if (window.live2dContextLost === true) {
+            return;
+        }
         elements.container.style.opacity = String(opacity);
         console.log('[App] Model opacity set to:', opacity);
     });

@@ -242,7 +242,8 @@ function startMouseTracking() {
                 screenX: cursorPos.x,
                 screenY: cursorPos.y,
                 relativeX: relativeX,
-                relativeY: relativeY
+                relativeY: relativeY,
+                isInWindow: isInWindow
             });
         }
     }, 16); // 约 60 FPS

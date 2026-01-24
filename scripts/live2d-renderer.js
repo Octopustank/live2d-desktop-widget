@@ -77,15 +77,17 @@ class Live2DRenderer {
             event.preventDefault(); // 允许后续 restore
             this.contextLost = true;
             this.isLoaded = false;
+            window.live2dContextLost = true; // 全局标志
             console.error('[Live2D] WebGL context lost (CONTEXT_LOST_WEBGL). Rendering suspended.');
             if (typeof window.showMessage === 'function') {
-                window.showMessage('图形环境丢失。请重启程序，或等待自动恢复（10s）。', 10000);
+                window.showMessage('图形环境丢失。请重启程序恢复。', 10000);
             }
         }, false);
 
         this.canvas.addEventListener('webglcontextrestored', () => {
             console.log('[Live2D] WebGL context restored. Attempting to reload model...');
             this.contextLost = false;
+            window.live2dContextLost = false;
             if (typeof window.showMessage === 'function') {
                 window.showMessage('图形环境已恢复，正在重新加载模型...', 3000);
             }
@@ -96,6 +98,47 @@ class Live2DRenderer {
                 }, 500);
             }
         }, false);
+    }
+
+    /**
+     * 尝试从 live2d.js 获取实际的 WebGL 上下文并添加监听
+     * 因为 live2d.js 内部会创建自己的上下文
+     */
+    attachContextListenerToLive2D() {
+        if (!this.canvas) return;
+        
+        // 尝试获取 live2d.js 创建的 WebGL 上下文
+        const gl = this.canvas.getContext('webgl') || 
+                   this.canvas.getContext('experimental-webgl') ||
+                   this.canvas.getContext('webgl2');
+        
+        if (gl && gl.canvas && !gl.canvas._live2dListenerAttached) {
+            gl.canvas._live2dListenerAttached = true;
+            console.log('[Live2D] Attaching context listeners to actual WebGL context');
+            
+            gl.canvas.addEventListener('webglcontextlost', (event) => {
+                event.preventDefault();
+                this.contextLost = true;
+                this.isLoaded = false;
+                window.live2dContextLost = true;
+                console.error('[Live2D] WebGL context lost (detected from live2d.js context).');
+                if (typeof window.showMessage === 'function') {
+                    window.showMessage('图形环境丢失。请从托盘菜单重启应用。', 12000);
+                }
+            }, false);
+
+            gl.canvas.addEventListener('webglcontextrestored', () => {
+                console.log('[Live2D] WebGL context restored (detected from live2d.js context).');
+                this.contextLost = false;
+                window.live2dContextLost = false;
+                if (typeof window.showMessage === 'function') {
+                    window.showMessage('图形环境已恢复，正在重新加载...', 3000);
+                }
+                if (this.modelPath) {
+                    setTimeout(() => this.loadModel(this.modelPath), 500);
+                }
+            }, false);
+        }
     }
     
     /**
@@ -208,6 +251,10 @@ class Live2DRenderer {
                 loadlive2d(this.canvasId, modelPath, () => {
                     console.log('[Live2D] Model loaded successfully');
                     this.isLoaded = true;
+                    // 加载成功后，尝试从 live2d.js 获取实际的 WebGL 上下文并监听
+                    setTimeout(() => {
+                        this.attachContextListenerToLive2D();
+                    }, 100);
                 });
             } catch (e) {
                 console.error('[Live2D] Error loading model:', e);
