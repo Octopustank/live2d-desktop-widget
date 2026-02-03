@@ -84,6 +84,30 @@ function showMessage(text, timeout = config.messageTimeout) {
 window.showMessage = showMessage;
 
 /**
+ * 显示错误遮罩层（持久化，用于 WebGL 上下文丢失等严重错误）
+ */
+function showErrorOverlay() {
+    const overlay = document.getElementById('error-overlay');
+    if (overlay) {
+        overlay.classList.add('visible');
+    }
+}
+
+/**
+ * 隐藏错误遮罩层
+ */
+function hideErrorOverlay() {
+    const overlay = document.getElementById('error-overlay');
+    if (overlay) {
+        overlay.classList.remove('visible');
+    }
+}
+
+// 暴露错误遮罩控制函数
+window.showErrorOverlay = showErrorOverlay;
+window.hideErrorOverlay = hideErrorOverlay;
+
+/**
  * 更新 Canvas 尺寸以适配 DPI
  * 注意：live2d.js 内部会管理渲染，这里只做初始设置
  */
@@ -345,6 +369,28 @@ function loadModel(modelPath) {
     }
 }
 
+// ==================== 错误遮罩层 ====================
+
+function initErrorOverlay() {
+    const btnRestart = document.getElementById('btn-restart-app');
+    const btnDismiss = document.getElementById('btn-dismiss-error');
+
+    if (btnRestart) {
+        btnRestart.addEventListener('click', () => {
+            console.log('[App] User requested restart from error overlay');
+            ipcRenderer.send('restart-app');
+        });
+    }
+
+    if (btnDismiss) {
+        btnDismiss.addEventListener('click', () => {
+            console.log('[App] User dismissed error overlay');
+            hideErrorOverlay();
+            showMessage('错误遮罩已隐藏。建议尽快重启应用。', 5000);
+        });
+    }
+}
+
 // ==================== IPC 通信 ====================
 
 function initIPC() {
@@ -437,6 +483,7 @@ function init() {
     initMouseTracking();
     initClickInteraction();
     initToolbar();
+    initErrorOverlay();
     initIPC();
     
     // 监听窗口大小变化

@@ -39,7 +39,8 @@ function getDefaultConfig() {
         displayProfiles: {},
         // 其他设置
         autoHideOnHover: false,
-        hoverOpacity: 0.1
+        hoverOpacity: 0.1,
+        clickThrough: false  // 点击穿透状态
     };
 }
 
@@ -157,6 +158,12 @@ function createMainWindow() {
     mainWindow.webContents.on('did-finish-load', () => {
         if (userConfig) {
             mainWindow.webContents.send('config-updated', userConfig);
+            // 恢复点击穿透状态
+            if (userConfig.clickThrough === true) {
+                isClickThrough = true;
+                mainWindow.setIgnoreMouseEvents(true);
+                mainWindow.webContents.send('click-through-changed', true);
+            }
         }
     });
     
@@ -343,6 +350,11 @@ function createTray() {
                 if (mainWindow) {
                     mainWindow.setIgnoreMouseEvents(isClickThrough);
                     mainWindow.webContents.send('click-through-changed', isClickThrough);
+                }
+                // 保存点击穿透状态到配置
+                if (userConfig) {
+                    userConfig.clickThrough = isClickThrough;
+                    saveConfig(userConfig);
                 }
             }
         },
@@ -565,6 +577,7 @@ function setupIPC() {
             autoHideOnHover: typeof payload.autoHideOnHover === 'boolean' ? payload.autoHideOnHover : current.autoHideOnHover,
             hoverOpacity: Number.isFinite(Number(payload.hoverOpacity)) ? Math.max(0, Math.min(1, Number(payload.hoverOpacity))) : current.hoverOpacity,
             hardwareAcceleration: typeof payload.hardwareAcceleration === 'boolean' ? payload.hardwareAcceleration : current.hardwareAcceleration,
+            clickThrough: typeof payload.clickThrough === 'boolean' ? payload.clickThrough : current.clickThrough,
             // 保留显示档案
             displayProfiles: current.displayProfiles || {}
         };

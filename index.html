@@ -25,6 +25,23 @@
         <button id="btn-settings" class="tool-btn" title="设置">⚙️</button>
     </div>
     
+    <!-- 错误遮罩层 -->
+    <div id="error-overlay" class="error-overlay">
+        <div class="error-content">
+            <div class="error-icon">⚠️</div>
+            <div class="error-title">图形环境已丢失</div>
+            <div class="error-message">
+                检测到 WebGL 上下文丢失（可能由于息屏、切换显示器或驱动重置）。
+                <br><br>
+                请重启应用以恢复正常显示。
+            </div>
+            <div class="error-actions">
+                <button id="btn-restart-app" class="error-btn error-btn-primary">立即重启</button>
+                <button id="btn-dismiss-error" class="error-btn error-btn-secondary">稍后处理</button>
+            </div>
+        </div>
+    </div>
+    
     <script src="scripts/live2d-renderer.js"></script>
     <script src="scripts/app.js"></script>
 </body>
