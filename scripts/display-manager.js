@@ -72,19 +72,24 @@ class DisplayManager {
 
     /**
      * 生成显示器指纹
-     * 使用显示器的 ID、分辨率、缩放因子等信息生成唯一标识
+     * 使用显示器的 ID 和逻辑分辨率生成唯一标识
+     * 
+     * 注意：不包含 scaleFactor，因为相同显示器在 X11 和 Wayland 下
+     * 报告的 scaleFactor 可能不同（例如 150% 在 X11 为 1.5，在 Wayland 为 2），
+     * 但逻辑分辨率是一致的。这样可以确保显示器配置档案在
+     * X11 和 Wayland 会话间正确复用。
      */
     generateDisplayFingerprint(display) {
         const info = {
             id: display.id,
             width: display.bounds.width,
-            height: display.bounds.height,
-            scaleFactor: display.scaleFactor
+            height: display.bounds.height
         };
         const str = JSON.stringify(info);
         const hash = crypto.createHash('md5').update(str).digest('hex').substring(0, 12);
         
-        this.verbose('Fingerprint generated:', hash, 'for display', display.id);
+        this.verbose('Fingerprint generated:', hash, 'for display', display.id,
+            `(${display.bounds.width}x${display.bounds.height}, scale=${display.scaleFactor})`);
         
         return hash;
     }
@@ -111,10 +116,11 @@ class DisplayManager {
             // 逻辑分辨率（操作系统报告的，已考虑缩放）
             logicalWidth: display.workAreaSize.width,
             logicalHeight: display.workAreaSize.height,
-            // 物理分辨率
+            // 物理分辨率（注意：在 Wayland 分数缩放下可能不准确，
+            // 因为 scaleFactor 被向上取整 —— 例如 150% 报告为 2x）
             physicalWidth: display.bounds.width * display.scaleFactor,
             physicalHeight: display.bounds.height * display.scaleFactor,
-            // 缩放因子
+            // 缩放因子（Electron 报告的缓冲区缩放比，Wayland 下可能为整数）
             scaleFactor: display.scaleFactor,
             // 工作区域（排除任务栏等）
             workArea: display.workArea,
@@ -122,7 +128,14 @@ class DisplayManager {
             bounds: display.bounds
         };
 
-        this.log(`Display: ${info.fingerprint} | ${info.logicalWidth}x${info.logicalHeight} @ ${info.scaleFactor * 100}%`);
+        // 检测是否在 Wayland 下，提供额外缩放信息
+        const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+        const scaleNote = isWayland && display.scaleFactor !== Math.round(display.scaleFactor * 10) / 10
+            ? ' (Wayland buffer scale, actual may differ)'
+            : '';
+
+        this.log(`Display: ${info.fingerprint} | ${info.logicalWidth}x${info.logicalHeight} @ ${info.scaleFactor * 100}%${scaleNote}`);
+        this.log(`  Bounds: ${display.bounds.width}x${display.bounds.height} | Session: ${isWayland ? 'Wayland' : 'X11'}`);
         
         this.verbose('  Physical:', `${info.physicalWidth}x${info.physicalHeight}`);
         this.verbose('  Work Area:', info.workArea);

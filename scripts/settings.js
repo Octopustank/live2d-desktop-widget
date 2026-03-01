@@ -24,6 +24,14 @@ const infoResolution = document.getElementById('info-resolution');
 const infoScale = document.getElementById('info-scale');
 const infoFingerprint = document.getElementById('info-fingerprint');
 
+// 鼠标追踪信息元素
+const infoSession = document.getElementById('info-session');
+const infoDe = document.getElementById('info-de');
+const infoMethod = document.getElementById('info-method');
+const infoFullscreen = document.getElementById('info-fullscreen');
+const trackingWarning = document.getElementById('tracking-warning');
+const btnRecheckTracking = document.getElementById('btn-recheck-tracking');
+
 // 锚点按钮
 const anchorButtons = document.querySelectorAll('.anchor-btn[data-anchor]');
 
@@ -44,10 +52,11 @@ const anchorNames = {
     'center': '居中'
 };
 
-function populate(config, displayInfo, displays) {
+function populate(config, displayInfo, displays, envInfo) {
     console.log('[Settings] Populating with config:', config);
     console.log('[Settings] Current display:', displayInfo);
     console.log('[Settings] All displays:', displays);
+    console.log('[Settings] Env info:', envInfo);
     
     if (!config) return;
     
@@ -83,6 +92,11 @@ function populate(config, displayInfo, displays) {
     // 更新锚点按钮状态
     updateAnchorButtons();
     updatePreview();
+    
+    // 鼠标追踪信息
+    if (envInfo) {
+        updateTrackingInfo(envInfo);
+    }
 }
 
 function populateDisplaySelector(currentDisplay) {
@@ -208,9 +222,60 @@ function toNumber(value) {
     return Number.isFinite(num) ? num : null;
 }
 
+// ==================== 鼠标追踪信息 ====================
+
+const SESSION_NAMES = {
+    'x11': 'X11',
+    'wayland': 'Wayland'
+};
+
+const DE_NAMES = {
+    'gnome': 'GNOME',
+    'kde': 'KDE Plasma',
+    'hyprland': 'Hyprland',
+    'sway': 'Sway',
+    'unknown': '未知'
+};
+
+const METHOD_NAMES = {
+    'electron': 'Electron API',
+    'electron-fallback': 'Electron API（受限）',
+    'gnome-extension': 'GNOME Shell 扩展',
+    'gnome-eval': 'GNOME Shell.Eval',
+    'gnome-gdbus-ext': 'gdbus（扩展接口）',
+    'gnome-gdbus-eval': 'gdbus（Shell.Eval）',
+    'kde-dbus': 'KWin DBus',
+    'hyprland': 'hyprctl',
+    'ydotool': 'ydotool',
+    'unknown': '未初始化'
+};
+
+function updateTrackingInfo(envInfo) {
+    if (!envInfo) return;
+
+    infoSession.textContent = SESSION_NAMES[envInfo.sessionType] || envInfo.sessionType;
+    infoDe.textContent = DE_NAMES[envInfo.desktopEnv] || envInfo.desktopEnv;
+    infoMethod.textContent = METHOD_NAMES[envInfo.trackingMethod] || envInfo.trackingMethod;
+
+    // 判断全屏追踪是否有效
+    const isFullscreen = envInfo.trackingMethod && 
+        envInfo.trackingMethod !== 'electron-fallback' &&
+        envInfo.trackingMethod !== 'unknown';
+
+    if (isFullscreen) {
+        infoFullscreen.textContent = '✓ 正常';
+        infoFullscreen.style.color = '#4caf50';
+        trackingWarning.style.display = 'none';
+    } else {
+        infoFullscreen.textContent = '✗ 不可用';
+        infoFullscreen.style.color = '#f0c040';
+        trackingWarning.style.display = 'block';
+    }
+}
+
 async function init() {
     const result = await ipcRenderer.invoke('get-config-with-display');
-    populate(result.config, result.displayInfo, result.allDisplays);
+    populate(result.config, result.displayInfo, result.allDisplays, result.envInfo);
 }
 
 // 显示器选择器变化
@@ -276,6 +341,26 @@ resetButton.addEventListener('click', () => {
     offsetYInput.value = -50;
     updateAnchorButtons();
     updatePreview();
+});
+
+// 重新检测鼠标追踪
+btnRecheckTracking.addEventListener('click', async () => {
+    btnRecheckTracking.textContent = '检测中...';
+    btnRecheckTracking.disabled = true;
+    
+    try {
+        const envInfo = await ipcRenderer.invoke('get-cursor-tracker-status');
+        if (envInfo) {
+            updateTrackingInfo(envInfo);
+        }
+    } catch (e) {
+        console.error('[Settings] Recheck failed:', e);
+    }
+    
+    setTimeout(() => {
+        btnRecheckTracking.textContent = '重新检测';
+        btnRecheckTracking.disabled = false;
+    }, 500);
 });
 
 // 提交表单

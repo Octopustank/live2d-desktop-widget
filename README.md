@@ -30,6 +30,8 @@ This project is **focused solely on Live2D itself**.
   Support local Live2D Cubism 2.x (V2) model rendering
 - 全屏幕鼠标位置追踪（眼睛 / 头部跟随）
   Full-screen mouse tracking (eyes / head follow cursor)
+- 跨显示服务器支持（X11 / Wayland）和多桌面环境兼容（GNOME / KDE / Hyprland）
+  Cross display server support (X11 / Wayland) and multi-DE compatibility (GNOME / KDE / Hyprland)
 - 模型显示区域点击交互
   Click interaction on model area
 - 透明背景、无边框窗口
@@ -80,8 +82,10 @@ This project is **focused solely on Live2D itself**.
 
 - 配置持久化（重启后自动恢复）
   Persistent configuration across restarts
-- 针对 Gnome 42 / Wayland 优化
-  Optimized for Gnome 42 / Wayland
+- 鼠标追踪状态检测（设置界面可查看当前追踪方式和状态）
+  Mouse tracking status detection (view current method and status in settings)
+- 适配 X11 和 Wayland 显示服务器
+  Adapted for both X11 and Wayland display servers
 
 ------
 
@@ -183,7 +187,12 @@ live2d-desktop/
 │   ├── app.js                 # Application logic
 │   ├── live2d-renderer.js     # Live2D renderer
 │   ├── settings.js            # Settings logic
-│   └── display-manager.js     # Display manager (NEW)
+│   ├── display-manager.js     # Display manager
+│   └── cursor-tracker.js      # Cross-platform cursor tracking
+├── extensions/
+│   └── cursor-tracker@live2d-desktop/  # GNOME Shell extension
+│       ├── extension.js
+│       └── metadata.json
 ├── styles/
 │   └── main.css
 ├── lib/
@@ -237,8 +246,8 @@ live2d-desktop/
 ## 适配说明 / Compatibility
 
 - **测试环境** / Tested on:
-  - Ubuntu 22.04.5 LTS + Gnome 42.9
-  - X11
+  - Ubuntu 22.04.5 LTS + GNOME 42.9 + X11
+  - Fedora 43 + GNOME 49 + Wayland
   - 多显示器环境 / Multi-monitor setups
   - 不同 DPI 缩放比例 / Various DPI scaling factors
 
@@ -271,6 +280,51 @@ live2d-desktop/
 > - Resolution and scaling shown in settings may differ from system settings
 >
 > This is a known Chromium limitation, not an issue with this application. The app adapts to this limitation as best as possible.
+
+> ⚠️ **Wayland 全屏鼠标追踪 / Wayland Full-Screen Mouse Tracking**
+>
+> Wayland 的安全模型不允许应用获取窗口外的全局光标位置。
+> 因此 **X11 环境下可直接使用** 全屏鼠标追踪，而 **Wayland 环境需要额外配置**：
+>
+> Wayland's security model prevents applications from accessing global cursor position outside their window.
+> Full-screen mouse tracking works **out-of-the-box on X11**, but **requires additional setup on Wayland**:
+>
+> | 桌面环境 | 追踪方式 | 是否需要配置 |
+> |----------|----------|-------------|
+> | X11（任意 DE） | Electron API | ✓ 直接可用 |
+> | Wayland + GNOME 45+ | GNOME Shell 扩展 | 需手动安装（见下方） |
+> | Wayland + GNOME（旧版） | Shell.Eval | 需启用 `unsafe-mode` |
+> | Wayland + KDE Plasma | KWin DBus | ✓ 直接可用 |
+> | Wayland + Hyprland | hyprctl | ✓ 直接可用 |
+>
+> **如果不做任何配置**，Wayland 下模型眼球仅在应用窗口内跟随光标（功能降级，不影响其他功能）。
+>
+> Without any setup, models on Wayland will only track the cursor within the app window (graceful degradation).
+>
+> ### GNOME Shell 扩展安装 / GNOME Shell Extension Setup
+>
+> 本项目附带一个轻量级 GNOME Shell 扩展 `cursor-tracker@live2d-desktop`，
+> 用于在 GNOME Shell 进程内暴露光标位置的 DBus 接口。
+>
+> A lightweight GNOME Shell extension `cursor-tracker@live2d-desktop` is included with this project.
+> It registers a DBus interface within the GNOME Shell process to expose cursor position.
+>
+> **安装步骤 / Installation steps:**
+>
+> ```bash
+> # 1. 复制扩展到 GNOME 扩展目录
+> #    Copy extension to GNOME extensions directory
+> cp -r extensions/cursor-tracker@live2d-desktop \
+>     ~/.local/share/gnome-shell/extensions/
+>
+> # 2. 启用扩展（可能需要先重新登录或重启 GNOME Shell）
+> #    Enable extension (may require re-login or GNOME Shell restart first)
+> gnome-extensions enable cursor-tracker@live2d-desktop
+> ```
+>
+> 安装后重启应用即可。可在设置窗口「鼠标追踪」区域检查追踪状态。
+>
+> Restart the app after installation. Check tracking status in the "Mouse Tracking" section of settings.
 
 ------
 

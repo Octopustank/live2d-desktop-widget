@@ -1,25 +1,26 @@
 /**
- * Live2D Desktop Widget for Gnome 42
+ * Live2D Desktop Widget
  * 主进程入口文件
  * 
  * 功能特性:
  * - 透明无边框窗口
- * - 全屏鼠标追踪（通过 screen.getCursorScreenPoint 实现）
+ * - 全屏鼠标追踪（X11 / Wayland + GNOME / KDE / Hyprland）
  * - 顶层显示
  * - 仅模型区域可点击交互
- * - 支持 Gnome 42 缩放适配
+ * - 支持多桌面环境和显示服务器缩放适配
  */
 
 const { app, BrowserWindow, screen, Tray, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { DisplayManager, AnchorPoints, SizeMode } = require('./scripts/display-manager');
+const { CursorTracker } = require('./scripts/cursor-tracker');
 
 // 全局变量
 let mainWindow = null;
 let tray = null;
 let isClickThrough = false;
-let mouseTrackingInterval = null;
+let cursorTracker = null;
 let settingsWindow = null;
 let userConfig = null;
 let displayManager = null;
@@ -94,11 +95,17 @@ try {
 
 /**
  * 获取当前显示器的缩放因子
+ * 注意：在 Wayland 下分数缩放（如 150%）时，Electron 可能报告整数值（如 2x），
+ * 这是 Wayland 的缓冲区缩放机制导致的，不影响唄布逻辑分辨率的准确性。
  */
 function getScaleFactor() {
     const primaryDisplay = screen.getPrimaryDisplay();
     const factor = primaryDisplay.scaleFactor || 1;
-    console.log(`[Display] ${primaryDisplay.workAreaSize.width}x${primaryDisplay.workAreaSize.height} @ ${factor * 100}%`);
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || !!process.env.WAYLAND_DISPLAY;
+    console.log(`[Display] ${primaryDisplay.workAreaSize.width}x${primaryDisplay.workAreaSize.height} @ ${factor * 100}% | Session: ${isWayland ? 'Wayland' : 'X11'}`);
+    if (isWayland && factor === Math.round(factor)) {
+        console.log(`[Display] Note: Wayland buffer scale ${factor}x (actual fractional scale may differ)`);
+    }
     return factor;
 }
 
@@ -142,10 +149,11 @@ function createMainWindow() {
         alwaysOnTop: true,          // 置顶显示
         skipTaskbar: true,          // 不显示在任务栏
         resizable: false,           // 禁止调整大小
-        hasShadow: false,           // 无阴影（Gnome兼容）
+        hasShadow: false,           // 无阴影
         
-        // Gnome/Wayland 兼容性
-        type: 'dock',               // 在某些环境下可帮助保持置顶
+        // Linux 桌面环境兼容性
+        // 'dock' 类型帮助保持置顶，在 GNOME/KDE 的 X11 和 XWayland 下均有效
+        type: 'dock',
         
         webPreferences: {
             nodeIntegration: true,
@@ -209,60 +217,67 @@ function createMainWindow() {
 
 /**
  * 启动全屏鼠标追踪
- * 使用 screen.getCursorScreenPoint() 获取鼠标位置
- * 这种方式无需额外窗口，可以追踪整个屏幕
+ * 
+ * 根据运行环境自动选择最佳追踪方式：
+ * - X11: 使用 Electron screen.getCursorScreenPoint() (~60 FPS)
+ * - Wayland + GNOME: 通过 GJS/DBus 调用 GNOME Shell (~20 FPS)
+ * - Wayland + KDE: 通过 KWin DBus 接口 (~12 FPS)
+ * - Wayland + Hyprland: 通过 hyprctl (~20 FPS)
+ * - 回退: Electron API（Wayland 上仅窗口内有效）
  */
 function startMouseTracking() {
-    if (mouseTrackingInterval) return;
-    
-    mouseTrackingInterval = setInterval(() => {
-        if (mainWindow && mainWindow.webContents) {
-            const cursorPos = screen.getCursorScreenPoint();
-            const windowBounds = mainWindow.getBounds();
-            
-            // 计算相对于窗口中心的位置
-            const centerX = windowBounds.x + windowBounds.width / 2;
-            const centerY = windowBounds.y + windowBounds.height / 2;
-            
-            const relativeX = cursorPos.x - centerX;
-            const relativeY = cursorPos.y - centerY;
-            
-            // 检查鼠标是否在窗口区域内
-            const isInWindow = cursorPos.x >= windowBounds.x && 
-                             cursorPos.x <= windowBounds.x + windowBounds.width &&
-                             cursorPos.y >= windowBounds.y && 
-                             cursorPos.y <= windowBounds.y + windowBounds.height;
-            
-            // 自动透明逻辑：穿透模式 + 启用自动隐藏 + 鼠标在窗口内
-            if (userConfig && userConfig.autoHideOnHover && isClickThrough) {
-                if (isInWindow) {
-                    // 鼠标在窗口内，通知渲染进程降低透明度
-                    const opacity = userConfig.hoverOpacity || 0.1;
-                    mainWindow.webContents.send('set-model-opacity', opacity);
-                } else {
-                    // 鼠标不在窗口内，恢复正常透明度
-                    mainWindow.webContents.send('set-model-opacity', 1.0);
-                }
-            }
-            
-            mainWindow.webContents.send('global-mouse-move', {
-                screenX: cursorPos.x,
-                screenY: cursorPos.y,
-                relativeX: relativeX,
-                relativeY: relativeY,
-                isInWindow: isInWindow
-            });
+    if (cursorTracker) return;
+
+    cursorTracker = new CursorTracker(screen);
+
+    cursorTracker.onPositionUpdate((cursorPos) => {
+        if (!mainWindow || !mainWindow.webContents) return;
+
+        const windowBounds = mainWindow.getBounds();
+
+        // 计算相对于窗口中心的位置
+        const centerX = windowBounds.x + windowBounds.width / 2;
+        const centerY = windowBounds.y + windowBounds.height / 2;
+
+        const relativeX = cursorPos.x - centerX;
+        const relativeY = cursorPos.y - centerY;
+
+        // 检查鼠标是否在窗口区域内
+        const isInWindow = cursorPos.x >= windowBounds.x &&
+                         cursorPos.x <= windowBounds.x + windowBounds.width &&
+                         cursorPos.y >= windowBounds.y &&
+                         cursorPos.y <= windowBounds.y + windowBounds.height;
+
+        // 自动透明逻辑：穿透模式 + 启用自动隐藏 + 鼠标在窗口内
+        if (userConfig && userConfig.autoHideOnHover && isClickThrough) {
+            const opacity = isInWindow ? (userConfig.hoverOpacity || 0.1) : 1.0;
+            mainWindow.webContents.send('set-model-opacity', opacity);
         }
-    }, 16); // 约 60 FPS
+
+        mainWindow.webContents.send('global-mouse-move', {
+            screenX: cursorPos.x,
+            screenY: cursorPos.y,
+            relativeX: relativeX,
+            relativeY: relativeY,
+            isInWindow: isInWindow
+        });
+    });
+
+    // X11 使用 60 FPS (16ms)，Wayland 使用 20 FPS (50ms) 以降低 DBus 调用开销
+    const interval = cursorTracker.isWayland() ? 50 : 16;
+    cursorTracker.start(interval);
+
+    const envInfo = cursorTracker.getEnvironmentInfo();
+    console.log(`[MouseTracking] Started | method: ${envInfo.trackingMethod} | session: ${envInfo.sessionType} | DE: ${envInfo.desktopEnv} | interval: ${interval}ms`);
 }
 
 /**
  * 停止鼠标追踪
  */
 function stopMouseTracking() {
-    if (mouseTrackingInterval) {
-        clearInterval(mouseTrackingInterval);
-        mouseTrackingInterval = null;
+    if (cursorTracker) {
+        cursorTracker.stop();
+        cursorTracker = null;
     }
 }
 
@@ -410,8 +425,8 @@ function createTray() {
 }
 
 /**
- * 监听显示器变化（Gnome 缩放适配）
- * 使用 DisplayManager 进行智能响应
+ * 监听显示器变化
+ * 使用 DisplayManager 进行智能响应，支持 GNOME/KDE 缩放适配
  */
 function setupDisplayListeners() {
     // 使用 DisplayManager 的监听器
@@ -539,6 +554,7 @@ function setupIPC() {
         const config = userConfig || getDefaultConfig();
         let displayInfo = null;
         let allDisplays = null;
+        let envInfo = null;
         
         if (displayManager) {
             // 使用主窗口的实际位置来确定当前显示器
@@ -549,7 +565,18 @@ function setupIPC() {
             console.log(`[Settings] Window at (${windowBounds?.x}, ${windowBounds?.y}) => Display ${displayInfo.fingerprint}`);
         }
         
-        return { config, displayInfo, allDisplays };
+        // 获取光标追踪环境信息
+        if (cursorTracker) {
+            envInfo = cursorTracker.getEnvironmentInfo();
+        }
+        
+        return { config, displayInfo, allDisplays, envInfo };
+    });
+
+    // 获取光标追踪环境诊断信息
+    ipcMain.handle('get-cursor-tracker-status', () => {
+        if (!cursorTracker) return null;
+        return cursorTracker.getEnvironmentInfo();
     });
 
     ipcMain.handle('select-model', async () => {

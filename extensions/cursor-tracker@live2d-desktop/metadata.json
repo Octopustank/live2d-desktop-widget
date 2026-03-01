@@ -1,0 +1,8 @@
+{
+    "uuid": "cursor-tracker@live2d-desktop",
+    "name": "Live2D Cursor Tracker",
+    "description": "Exposes global cursor position via DBus for Live2D Desktop Widget. Required for full-screen mouse tracking on GNOME Wayland.",
+    "shell-version": ["45", "46", "47", "48", "49"],
+    "version": 1,
+    "url": "https://github.com/Octopustank/live2d-desktop-widget"
+}
