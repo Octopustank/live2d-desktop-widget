@@ -129,6 +129,19 @@ function createMainWindow() {
     
     console.log('[Window] Initial bounds:', initialBounds);
     
+    // 记录启动时实际使用的显示器
+    if (displayManager && userConfig) {
+        const startDisplay = displayManager.getCurrentDisplayInfo({
+            x: initialBounds.x, y: initialBounds.y,
+            width: initialBounds.width, height: initialBounds.height
+        });
+        if (startDisplay && startDisplay.fingerprint) {
+            userConfig.lastDisplayFingerprint = startDisplay.fingerprint;
+            saveConfig(userConfig);
+            console.log('[Window] Startup display:', startDisplay.fingerprint);
+        }
+    }
+    
     // 如果进行了旧配置迁移，清除旧的 windowX/windowY
     if (displayManager.needsClearLegacyConfig()) {
         console.log('[Config] Clearing legacy windowX/windowY after migration');
@@ -579,6 +592,21 @@ function setupIPC() {
         return cursorTracker.getEnvironmentInfo();
     });
 
+    // 重启光标追踪（用于扩展延迟加载后手动重连）
+    ipcMain.handle('restart-cursor-tracker', () => {
+        if (!cursorTracker) {
+            startMouseTracking();
+        } else {
+            cursorTracker.restart();
+        }
+        // 等待一小段时间让新的追踪方式建立连接
+        return new Promise(resolve => {
+            setTimeout(() => {
+                resolve(cursorTracker ? cursorTracker.getEnvironmentInfo() : null);
+            }, 1500);
+        });
+    });
+
     ipcMain.handle('select-model', async () => {
         const result = await dialog.showOpenDialog({
             properties: ['openFile'],
@@ -606,7 +634,9 @@ function setupIPC() {
             hardwareAcceleration: typeof payload.hardwareAcceleration === 'boolean' ? payload.hardwareAcceleration : current.hardwareAcceleration,
             clickThrough: typeof payload.clickThrough === 'boolean' ? payload.clickThrough : current.clickThrough,
             // 保留显示档案
-            displayProfiles: current.displayProfiles || {}
+            displayProfiles: current.displayProfiles || {},
+            // 保留上次使用的显示器
+            lastDisplayFingerprint: current.lastDisplayFingerprint || null
         };
         
         // 处理显示设置（锚点和偏移）
@@ -635,6 +665,9 @@ function setupIPC() {
                     console.log('[Config] Display changed:', currentDisplayInfo.fingerprint, '=>', fingerprint);
                     targetFingerprint = fingerprint;
                 }
+                
+                // 记录当前使用的显示器，下次启动时恢复
+                merged.lastDisplayFingerprint = fingerprint;
             }
         } else if (displayManager && (payload.windowWidth || payload.windowHeight)) {
             // 仅更新窗口大小（兼容旧逻辑）

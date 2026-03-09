@@ -345,11 +345,12 @@ resetButton.addEventListener('click', () => {
 
 // 重新检测鼠标追踪
 btnRecheckTracking.addEventListener('click', async () => {
-    btnRecheckTracking.textContent = '检测中...';
+    btnRecheckTracking.textContent = '重新连接中...';
     btnRecheckTracking.disabled = true;
     
     try {
-        const envInfo = await ipcRenderer.invoke('get-cursor-tracker-status');
+        // 调用重启追踪器，而不是仅读取状态
+        const envInfo = await ipcRenderer.invoke('restart-cursor-tracker');
         if (envInfo) {
             updateTrackingInfo(envInfo);
         }

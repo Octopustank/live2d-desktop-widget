@@ -555,6 +555,28 @@ class DisplayManager {
             };
             displayInfo = this.getCurrentDisplayInfo(savedBounds);
             this.log('Detected display from saved position:', displayInfo.fingerprint);
+        } else if (savedConfig && savedConfig.lastDisplayFingerprint) {
+            // 没有旧坐标，但有上次使用的显示器指纹 → 尝试找到该显示器
+            const targetFp = savedConfig.lastDisplayFingerprint;
+            const displays = screen.getAllDisplays();
+            let targetDisplay = null;
+            for (const d of displays) {
+                if (this.generateDisplayFingerprint(d) === targetFp) {
+                    targetDisplay = d;
+                    break;
+                }
+            }
+            if (targetDisplay) {
+                this.log('Restoring to last display:', targetFp);
+                displayInfo = this.getCurrentDisplayInfo({
+                    x: targetDisplay.workArea.x + targetDisplay.workArea.width / 2,
+                    y: targetDisplay.workArea.y + targetDisplay.workArea.height / 2,
+                    width: 1, height: 1
+                });
+            } else {
+                this.log('Last display not found:', targetFp, '- using primary');
+                displayInfo = this.getCurrentDisplayInfo();
+            }
         } else {
             displayInfo = this.getCurrentDisplayInfo();
         }

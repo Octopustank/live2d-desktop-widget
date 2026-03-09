@@ -38,6 +38,8 @@ class CursorTracker {
         this._listeners = [];
         this._started = false;
         this._method = 'unknown';
+        this._retryTimer = null;
+        this._startInterval = 50;
 
         console.log(`[CursorTracker] Session: ${this.sessionType}, DE: ${this.desktopEnv}`);
 
@@ -93,6 +95,7 @@ class CursorTracker {
     start(interval = 50) {
         if (this._started) return;
         this._started = true;
+        this._startInterval = interval;
 
         if (this.sessionType !== 'wayland') {
             this._startElectronTracking(interval);
@@ -127,7 +130,22 @@ class CursorTracker {
             clearInterval(this._interval);
             this._interval = null;
         }
+        if (this._retryTimer) {
+            clearInterval(this._retryTimer);
+            this._retryTimer = null;
+        }
         this._killHelper();
+    }
+
+    /**
+     * 重启光标追踪（用于切换追踪方式或扩展延迟加载后重连）
+     * @param {number} [interval] - 可选的新轮询间隔
+     */
+    restart(interval) {
+        const useInterval = interval || this._startInterval || 50;
+        console.log(`[CursorTracker] Restarting (interval: ${useInterval}ms)...`);
+        this.stop();
+        this.start(useInterval);
     }
 
     /**
@@ -214,23 +232,79 @@ class CursorTracker {
         console.warn('[CursorTracker] See README for installation instructions');
 
         // 尝试 2: Shell.Eval（旧版 GNOME 或已启用 unsafe mode）
-        return this._tryEvalOrFallback(interval);
-    }
-
-    /**
-     * 尝试 Shell.Eval，如果不可用则回退到 Electron
-     */
-    _tryEvalOrFallback(interval) {
         if (this._isShellEvalAvailable()) {
             console.log('[CursorTracker] Shell.Eval is available (unsafe mode enabled)');
             return this._startGjsHelper(interval, 'eval');
         }
 
-        console.warn('[CursorTracker] Neither extension nor Shell.Eval available on GNOME Wayland');
-        console.warn('[CursorTracker] To enable full-screen tracking, please:');
-        console.warn('[CursorTracker]   1. Restart the app (extension may need a session restart to load)');
-        console.warn('[CursorTracker]   2. Or manually enable: gnome-extensions enable cursor-tracker@live2d-desktop');
-        return false;
+        // 都不可用 - 先启动 Electron 回退（限窗口内），同时在后台定期重试
+        console.warn('[CursorTracker] Neither extension nor Shell.Eval available, using fallback + deferred retry');
+        this._startElectronTracking(interval);
+        this._scheduleDeferredGnomeRetry(interval);
+        return true; // 已在追踪（回退模式），不走通用 fallback
+    }
+
+    /**
+     * 延迟重试：后台定期检查扩展是否变为可用
+     * 用于处理开机自启时扩展尚未加载的情况
+     */
+    _scheduleDeferredGnomeRetry(interval) {
+        const MAX_RETRIES = 10;
+        const RETRY_INTERVAL = 3000; // 每 3 秒检查一次
+        let retryCount = 0;
+
+        console.log(`[CursorTracker] Scheduling deferred retry (max ${MAX_RETRIES} attempts, every ${RETRY_INTERVAL / 1000}s)`);
+
+        this._retryTimer = setInterval(() => {
+            retryCount++;
+
+            if (!this._started) {
+                clearInterval(this._retryTimer);
+                this._retryTimer = null;
+                return;
+            }
+
+            if (retryCount > MAX_RETRIES) {
+                clearInterval(this._retryTimer);
+                this._retryTimer = null;
+                console.warn(`[CursorTracker] Extension retry limit reached (${MAX_RETRIES} attempts). ` +
+                    'Full-screen tracking unavailable. Please check extension installation and restart the app.');
+                return;
+            }
+
+            console.log(`[CursorTracker] Deferred retry ${retryCount}/${MAX_RETRIES}: checking extension...`);
+
+            if (this._isGnomeExtensionAvailable()) {
+                clearInterval(this._retryTimer);
+                this._retryTimer = null;
+                console.log('[CursorTracker] Extension now available! Upgrading from fallback...');
+                this._upgradeTracking(interval, 'extension');
+            } else if (this._isShellEvalAvailable()) {
+                clearInterval(this._retryTimer);
+                this._retryTimer = null;
+                console.log('[CursorTracker] Shell.Eval now available! Upgrading from fallback...');
+                this._upgradeTracking(interval, 'eval');
+            }
+        }, RETRY_INTERVAL);
+    }
+
+    /**
+     * 从回退模式升级到更好的追踪方式（不改变 _started 状态）
+     */
+    _upgradeTracking(interval, mode) {
+        // 停止当前的回退追踪
+        if (this._interval) {
+            clearInterval(this._interval);
+            this._interval = null;
+        }
+        this._killHelper();
+
+        // 启动新的追踪方式
+        const started = this._startGjsHelper(interval, mode);
+        if (!started) {
+            console.warn('[CursorTracker] Upgrade failed, reverting to Electron fallback');
+            this._startElectronTracking(interval);
+        }
     }
 
     /**
@@ -366,15 +440,16 @@ new GLib.MainLoop(null, false).run();
         }
 
         try {
-            this._helperProcess = spawn('gjs', ['-c', gjsScript], {
+            const proc = spawn('gjs', ['-c', gjsScript], {
                 stdio: ['ignore', 'pipe', 'pipe']
             });
+            this._helperProcess = proc;
 
             this._method = `gnome-${mode}`;
-            console.log(`[CursorTracker] GJS helper started (mode: ${mode}, PID: ${this._helperProcess.pid}, interval: ${pollInterval}ms)`);
+            console.log(`[CursorTracker] GJS helper started (mode: ${mode}, PID: ${proc.pid}, interval: ${pollInterval}ms)`);
 
             let buffer = '';
-            this._helperProcess.stdout.on('data', (data) => {
+            proc.stdout.on('data', (data) => {
                 buffer += data.toString();
                 const lines = buffer.split('\n');
                 buffer = lines.pop(); // 保留不完整的行
@@ -391,13 +466,19 @@ new GLib.MainLoop(null, false).run();
                 }
             });
 
-            this._helperProcess.stderr.on('data', (d) => {
+            proc.stderr.on('data', (d) => {
                 const msg = d.toString().trim();
                 if (msg) console.warn('[CursorTracker:gjs]', msg);
             });
 
-            this._helperProcess.on('exit', (code) => {
+            proc.on('exit', (code) => {
                 console.log(`[CursorTracker] GJS helper exited (code: ${code})`);
+
+                // 如果已经被 restart/stop 替换为新的进程，忽略旧进程的退出
+                if (this._helperProcess !== proc) {
+                    console.log('[CursorTracker] Ignoring exit from replaced helper process');
+                    return;
+                }
                 this._helperProcess = null;
 
                 // 如果仍然应该运行，尝试降级
@@ -419,9 +500,11 @@ new GLib.MainLoop(null, false).run();
                 }
             });
 
-            this._helperProcess.on('error', (err) => {
+            proc.on('error', (err) => {
                 console.error('[CursorTracker] GJS spawn error:', err.message);
-                this._helperProcess = null;
+                if (this._helperProcess === proc) {
+                    this._helperProcess = null;
+                }
             });
 
             return true;
