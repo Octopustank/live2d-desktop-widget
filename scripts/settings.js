@@ -24,13 +24,20 @@ const infoResolution = document.getElementById('info-resolution');
 const infoScale = document.getElementById('info-scale');
 const infoFingerprint = document.getElementById('info-fingerprint');
 
-// 鼠标追踪信息元素
+// 鼠标追踪设置元素
+const trackingEnabledCheckbox = document.getElementById('tracking-enabled');
+const trackingModeSelect = document.getElementById('tracking-mode');
+const btnApplyTracking = document.getElementById('btn-apply-tracking');
+const trackingOptions = document.getElementById('tracking-options');
+const trackingModeDesc = document.getElementById('tracking-mode-desc');
+// 追踪状态信息元素
 const infoSession = document.getElementById('info-session');
 const infoDe = document.getElementById('info-de');
+const infoRequestedMode = document.getElementById('info-requested-mode');
 const infoMethod = document.getElementById('info-method');
 const infoFullscreen = document.getElementById('info-fullscreen');
 const trackingWarning = document.getElementById('tracking-warning');
-const btnRecheckTracking = document.getElementById('btn-recheck-tracking');
+const trackingWarningMsg = document.getElementById('tracking-warning-msg');
 
 // 锚点按钮
 const anchorButtons = document.querySelectorAll('.anchor-btn[data-anchor]');
@@ -93,9 +100,16 @@ function populate(config, displayInfo, displays, envInfo) {
     updateAnchorButtons();
     updatePreview();
     
-    // 鼠标追踪信息
+    // 鼠标追踪设置
+    trackingEnabledCheckbox.checked = config.mouseTracking !== false;
+    trackingOptions.style.display = trackingEnabledCheckbox.checked ? '' : 'none';
+    loadTrackingModes(config.trackingMode || 'auto');
+
     if (envInfo) {
         updateTrackingInfo(envInfo);
+    } else if (config.mouseTracking === false) {
+        infoMethod.textContent = '已禁用';
+        infoFullscreen.textContent = '-';
     }
 }
 
@@ -222,7 +236,7 @@ function toNumber(value) {
     return Number.isFinite(num) ? num : null;
 }
 
-// ==================== 鼠标追踪信息 ====================
+// ==================== 鼠标追踪 ====================
 
 const SESSION_NAMES = {
     'x11': 'X11',
@@ -247,8 +261,21 @@ const METHOD_NAMES = {
     'kde-dbus': 'KWin DBus',
     'hyprland': 'hyprctl',
     'ydotool': 'ydotool',
+    'none': '未启动',
     'unknown': '未初始化'
 };
+
+const MODE_NAMES = {
+    'auto': '自动检测',
+    'electron': 'Electron API',
+    'gnome-extension': 'GNOME Shell 扩展',
+    'gnome-eval': 'GNOME Shell.Eval',
+    'kde-dbus': 'KDE KWin DBus',
+    'hyprland': 'Hyprland (hyprctl)',
+    'ydotool': 'ydotool'
+};
+
+let cachedModes = [];
 
 function updateTrackingInfo(envInfo) {
     if (!envInfo) return;
@@ -256,20 +283,69 @@ function updateTrackingInfo(envInfo) {
     infoSession.textContent = SESSION_NAMES[envInfo.sessionType] || envInfo.sessionType;
     infoDe.textContent = DE_NAMES[envInfo.desktopEnv] || envInfo.desktopEnv;
     infoMethod.textContent = METHOD_NAMES[envInfo.trackingMethod] || envInfo.trackingMethod;
+    infoRequestedMode.textContent = MODE_NAMES[envInfo.requestedMode] || envInfo.requestedMode || '-';
 
-    // 判断全屏追踪是否有效
     const isFullscreen = envInfo.trackingMethod && 
         envInfo.trackingMethod !== 'electron-fallback' &&
-        envInfo.trackingMethod !== 'unknown';
+        envInfo.trackingMethod !== 'unknown' &&
+        envInfo.trackingMethod !== 'none';
 
     if (isFullscreen) {
         infoFullscreen.textContent = '✓ 正常';
         infoFullscreen.style.color = '#4caf50';
-        trackingWarning.style.display = 'none';
     } else {
         infoFullscreen.textContent = '✗ 不可用';
         infoFullscreen.style.color = '#f0c040';
+    }
+
+    // 错误/警告
+    if (envInfo.lastError) {
         trackingWarning.style.display = 'block';
+        trackingWarningMsg.textContent = '⚠️ ' + envInfo.lastError;
+    } else if (!isFullscreen && envInfo.isWayland) {
+        trackingWarning.style.display = 'block';
+        trackingWarningMsg.textContent = '⚠️ Wayland 下全屏追踪不可用。GNOME 用户请安装 Shell 扩展，详见 README。';
+    } else {
+        trackingWarning.style.display = 'none';
+    }
+}
+
+async function loadTrackingModes(currentMode) {
+    try {
+        const modes = await ipcRenderer.invoke('get-available-tracking-modes');
+        cachedModes = modes;
+        populateTrackingModeSelect(modes, currentMode);
+    } catch (e) {
+        console.error('[Settings] Failed to load tracking modes:', e);
+    }
+}
+
+function populateTrackingModeSelect(modes, currentMode) {
+    trackingModeSelect.innerHTML = '';
+
+    for (const mode of modes) {
+        const opt = document.createElement('option');
+        opt.value = mode.id;
+        const suffix = (!mode.available && mode.id !== 'auto') ? ' ✗' : '';
+        opt.textContent = mode.name + suffix;
+        opt.title = mode.available 
+            ? mode.description 
+            : (mode.description + ' — ' + (mode.unavailableReason || '不可用'));
+        if (mode.id === currentMode) opt.selected = true;
+        trackingModeSelect.appendChild(opt);
+    }
+
+    updateModeDescription(currentMode);
+}
+
+function updateModeDescription(selectedId) {
+    const mode = cachedModes.find(m => m.id === selectedId);
+    if (mode) {
+        let desc = mode.description;
+        if (!mode.available && mode.unavailableReason) {
+            desc += ' — ' + mode.unavailableReason;
+        }
+        trackingModeDesc.textContent = desc;
     }
 }
 
@@ -343,24 +419,56 @@ resetButton.addEventListener('click', () => {
     updatePreview();
 });
 
-// 重新检测鼠标追踪
-btnRecheckTracking.addEventListener('click', async () => {
-    btnRecheckTracking.textContent = '重新连接中...';
-    btnRecheckTracking.disabled = true;
-    
-    try {
-        // 调用重启追踪器，而不是仅读取状态
-        const envInfo = await ipcRenderer.invoke('restart-cursor-tracker');
-        if (envInfo) {
-            updateTrackingInfo(envInfo);
-        }
-    } catch (e) {
-        console.error('[Settings] Recheck failed:', e);
+// 追踪开关
+trackingEnabledCheckbox.addEventListener('change', async () => {
+    const enabled = trackingEnabledCheckbox.checked;
+    trackingOptions.style.display = enabled ? '' : 'none';
+
+    const result = await ipcRenderer.invoke('apply-tracking-settings', {
+        enabled,
+        mode: trackingModeSelect.value
+    });
+
+    if (result && result.envInfo) {
+        updateTrackingInfo(result.envInfo);
+    } else if (!enabled) {
+        infoMethod.textContent = '已禁用';
+        infoMethod.style.color = '';
+        infoFullscreen.textContent = '-';
+        infoFullscreen.style.color = '';
+        trackingWarning.style.display = 'none';
     }
-    
+});
+
+// 追踪模式选择变化
+trackingModeSelect.addEventListener('change', () => {
+    updateModeDescription(trackingModeSelect.value);
+});
+
+// 应用追踪设置
+btnApplyTracking.addEventListener('click', async () => {
+    btnApplyTracking.textContent = '应用中...';
+    btnApplyTracking.disabled = true;
+
+    try {
+        const result = await ipcRenderer.invoke('apply-tracking-settings', {
+            enabled: trackingEnabledCheckbox.checked,
+            mode: trackingModeSelect.value
+        });
+
+        if (result && result.envInfo) {
+            updateTrackingInfo(result.envInfo);
+        }
+
+        // 刷新可用模式列表（可能因为reconnect而变化）
+        await loadTrackingModes(trackingModeSelect.value);
+    } catch (e) {
+        console.error('[Settings] Apply tracking failed:', e);
+    }
+
     setTimeout(() => {
-        btnRecheckTracking.textContent = '重新检测';
-        btnRecheckTracking.disabled = false;
+        btnApplyTracking.textContent = '应用';
+        btnApplyTracking.disabled = false;
     }, 500);
 });
 
@@ -376,6 +484,8 @@ form.addEventListener('submit', (event) => {
         autoHideOnHover: autoHideCheckbox.checked,
         hoverOpacity: toNumber(hoverOpacityInput.value) / 100,
         hardwareAcceleration: hardwareAccelCheckbox.checked,
+        mouseTracking: trackingEnabledCheckbox.checked,
+        trackingMode: trackingModeSelect.value,
         // 位置设置
         displaySettings: {
             fingerprint: currentFingerprint,

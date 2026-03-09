@@ -21,6 +21,9 @@ let mainWindow = null;
 let tray = null;
 let isClickThrough = false;
 let cursorTracker = null;
+let hoverTracker = null;
+let hoverInterval = null;
+let lastHoverOpacity = null;
 let settingsWindow = null;
 let userConfig = null;
 let displayManager = null;
@@ -41,7 +44,10 @@ function getDefaultConfig() {
         // 其他设置
         autoHideOnHover: false,
         hoverOpacity: 0.1,
-        clickThrough: false  // 点击穿透状态
+        clickThrough: false,  // 点击穿透状态
+        // 鼠标追踪
+        mouseTracking: true,     // 是否启用眼球追踪
+        trackingMode: 'auto'     // 追踪模式: auto, electron, gnome-extension, gnome-eval, kde-dbus, hyprland, ydotool
     };
 }
 
@@ -228,8 +234,105 @@ function createMainWindow() {
     });
 }
 
+function isCursorInWindow(cursorPos) {
+    if (!mainWindow || !cursorPos) return false;
+
+    const bounds = mainWindow.getBounds();
+    return cursorPos.x >= bounds.x &&
+           cursorPos.x <= bounds.x + bounds.width &&
+           cursorPos.y >= bounds.y &&
+           cursorPos.y <= bounds.y + bounds.height;
+}
+
+function canUseTrackerForHover(tracker) {
+    if (!tracker) return false;
+
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || Boolean(process.env.WAYLAND_DISPLAY);
+    const method = String(tracker.getMethod() || '');
+    return !isWayland || !method.startsWith('electron');
+}
+
+function applyHoverOpacity(cursorPos) {
+    if (!mainWindow || !mainWindow.webContents) return;
+
+    let nextOpacity = 1.0;
+
+    if (!userConfig || userConfig.autoHideOnHover !== true || !isClickThrough) {
+        nextOpacity = 1.0;
+    } else {
+        const inWindow = isCursorInWindow(cursorPos);
+        nextOpacity = inWindow ? (userConfig.hoverOpacity || 0.1) : 1.0;
+    }
+
+    if (lastHoverOpacity === nextOpacity) {
+        return;
+    }
+
+    lastHoverOpacity = nextOpacity;
+    mainWindow.webContents.send('set-model-opacity', nextOpacity);
+}
+
+function stopHoverDetection() {
+    if (hoverInterval) {
+        clearInterval(hoverInterval);
+        hoverInterval = null;
+    }
+
+    if (hoverTracker) {
+        hoverTracker.stop();
+        hoverTracker = null;
+    }
+}
+
 /**
- * 启动全屏鼠标追踪
+ * 悬停透明需要“可靠的全局坐标”。
+ * X11 下 Electron API 足够可靠；Wayland 下需复用/启用 CursorTracker。
+ */
+function syncHoverDetection() {
+    const needed = userConfig && userConfig.autoHideOnHover === true;
+
+    if (!needed) {
+        stopHoverDetection();
+        applyHoverOpacity(null);
+        return;
+    }
+
+    const isWayland = process.env.XDG_SESSION_TYPE === 'wayland' || Boolean(process.env.WAYLAND_DISPLAY);
+    const canReuseCursorTracker = canUseTrackerForHover(cursorTracker);
+
+    // 眼球追踪已在运行且坐标源可靠时，直接复用其坐标流，避免重复采样。
+    if (canReuseCursorTracker) {
+        stopHoverDetection();
+        return;
+    }
+
+    const mode = (userConfig && userConfig.trackingMode) || 'auto';
+    const hoverMode = isWayland && mode === 'electron' ? 'auto' : mode;
+
+    if (!isWayland) {
+        if (!hoverInterval) {
+            console.log('[HoverDetect] Started (Electron API, 50ms)');
+            hoverInterval = setInterval(() => {
+                applyHoverOpacity(screen.getCursorScreenPoint());
+            }, 50);
+        }
+        return;
+    }
+
+    if (!hoverTracker) {
+        hoverTracker = new CursorTracker(screen);
+        hoverTracker.onPositionUpdate((cursorPos) => {
+            applyHoverOpacity(cursorPos);
+        });
+
+        hoverTracker.start(50, hoverMode);
+        const envInfo = hoverTracker.getEnvironmentInfo();
+        console.log(`[HoverDetect] Started | method: ${envInfo.trackingMethod} | mode: ${hoverMode} | session: ${envInfo.sessionType} | DE: ${envInfo.desktopEnv} | interval: 50ms`);
+    }
+}
+
+/**
+ * 启动全屏鼠标追踪（眼球跟随）
  * 
  * 根据运行环境自动选择最佳追踪方式：
  * - X11: 使用 Electron screen.getCursorScreenPoint() (~60 FPS)
@@ -240,6 +343,11 @@ function createMainWindow() {
  */
 function startMouseTracking() {
     if (cursorTracker) return;
+
+    if (userConfig && userConfig.mouseTracking === false) {
+        console.log('[MouseTracking] Disabled by config');
+        return;
+    }
 
     cursorTracker = new CursorTracker(screen);
 
@@ -255,16 +363,13 @@ function startMouseTracking() {
         const relativeX = cursorPos.x - centerX;
         const relativeY = cursorPos.y - centerY;
 
-        // 检查鼠标是否在窗口区域内
         const isInWindow = cursorPos.x >= windowBounds.x &&
                          cursorPos.x <= windowBounds.x + windowBounds.width &&
                          cursorPos.y >= windowBounds.y &&
                          cursorPos.y <= windowBounds.y + windowBounds.height;
 
-        // 自动透明逻辑：穿透模式 + 启用自动隐藏 + 鼠标在窗口内
-        if (userConfig && userConfig.autoHideOnHover && isClickThrough) {
-            const opacity = isInWindow ? (userConfig.hoverOpacity || 0.1) : 1.0;
-            mainWindow.webContents.send('set-model-opacity', opacity);
+        if (canUseTrackerForHover(cursorTracker)) {
+            applyHoverOpacity(cursorPos);
         }
 
         mainWindow.webContents.send('global-mouse-move', {
@@ -278,10 +383,14 @@ function startMouseTracking() {
 
     // X11 使用 60 FPS (16ms)，Wayland 使用 20 FPS (50ms) 以降低 DBus 调用开销
     const interval = cursorTracker.isWayland() ? 50 : 16;
-    cursorTracker.start(interval);
+    const mode = (userConfig && userConfig.trackingMode) || 'auto';
+    cursorTracker.start(interval, mode);
 
     const envInfo = cursorTracker.getEnvironmentInfo();
-    console.log(`[MouseTracking] Started | method: ${envInfo.trackingMethod} | session: ${envInfo.sessionType} | DE: ${envInfo.desktopEnv} | interval: ${interval}ms`);
+    console.log(`[MouseTracking] Started | method: ${envInfo.trackingMethod} | mode: ${mode} | session: ${envInfo.sessionType} | DE: ${envInfo.desktopEnv} | interval: ${interval}ms`);
+
+    syncHoverDetection();
+
 }
 
 /**
@@ -292,6 +401,8 @@ function stopMouseTracking() {
         cursorTracker.stop();
         cursorTracker = null;
     }
+
+    syncHoverDetection();
 }
 
 function applyWindowSettings(targetFingerprint = null) {
@@ -379,6 +490,7 @@ function createTray() {
                     mainWindow.setIgnoreMouseEvents(isClickThrough);
                     mainWindow.webContents.send('click-through-changed', isClickThrough);
                 }
+                applyHoverOpacity(cursorTracker ? cursorTracker.lastPosition : null);
                 // 保存点击穿透状态到配置
                 if (userConfig) {
                     userConfig.clickThrough = isClickThrough;
@@ -541,6 +653,7 @@ function setupIPC() {
     
     // 设置点击穿透
     ipcMain.on('set-ignore-mouse', (event, ignore) => {
+        isClickThrough = Boolean(ignore);
         if (mainWindow) {
             if (ignore) {
                 // 点击穿透但保留前进鼠标事件用于特定区域
@@ -548,6 +661,14 @@ function setupIPC() {
             } else {
                 mainWindow.setIgnoreMouseEvents(false);
             }
+            mainWindow.webContents.send('click-through-changed', isClickThrough);
+        }
+
+        applyHoverOpacity(cursorTracker ? cursorTracker.lastPosition : null);
+
+        if (userConfig) {
+            userConfig.clickThrough = isClickThrough;
+            saveConfig(userConfig);
         }
     });
 
@@ -593,11 +714,12 @@ function setupIPC() {
     });
 
     // 重启光标追踪（用于扩展延迟加载后手动重连）
-    ipcMain.handle('restart-cursor-tracker', () => {
+    ipcMain.handle('restart-cursor-tracker', (event, mode) => {
+        const useMode = mode || (userConfig && userConfig.trackingMode) || 'auto';
         if (!cursorTracker) {
             startMouseTracking();
         } else {
-            cursorTracker.restart();
+            cursorTracker.restart(undefined, useMode);
         }
         // 等待一小段时间让新的追踪方式建立连接
         return new Promise(resolve => {
@@ -605,6 +727,53 @@ function setupIPC() {
                 resolve(cursorTracker ? cursorTracker.getEnvironmentInfo() : null);
             }, 1500);
         });
+    });
+
+    // 应用追踪设置（立即生效 + 保存到配置）
+    ipcMain.handle('apply-tracking-settings', (event, settings) => {
+        if (!settings) return { applied: false };
+
+        const { enabled, mode } = settings;
+
+        // 更新配置
+        if (userConfig) {
+            if (typeof enabled === 'boolean') userConfig.mouseTracking = enabled;
+            if (typeof mode === 'string') userConfig.trackingMode = mode;
+            saveConfig(userConfig);
+        }
+
+        // 禁用追踪
+        if (enabled === false) {
+            stopMouseTracking();
+            // stopMouseTracking 内部会 reconcile，如需悬停会自动启动独立检测
+            return { applied: true, envInfo: null };
+        }
+
+        // 启用或切换模式
+        if (cursorTracker) {
+            const interval = cursorTracker.isWayland() ? 50 : 16;
+            cursorTracker.restart(interval, mode || 'auto');
+        } else {
+            startMouseTracking();
+        }
+
+        return new Promise(resolve => {
+            setTimeout(() => {
+                resolve({
+                    applied: true,
+                    envInfo: cursorTracker ? cursorTracker.getEnvironmentInfo() : null
+                });
+            }, 1500);
+        });
+    });
+
+    // 获取可用追踪模式列表
+    ipcMain.handle('get-available-tracking-modes', () => {
+        if (cursorTracker) {
+            return cursorTracker.getAvailableModes();
+        }
+        const tempTracker = new CursorTracker(screen);
+        return tempTracker.getAvailableModes();
     });
 
     ipcMain.handle('select-model', async () => {
@@ -633,6 +802,8 @@ function setupIPC() {
             hoverOpacity: Number.isFinite(Number(payload.hoverOpacity)) ? Math.max(0, Math.min(1, Number(payload.hoverOpacity))) : current.hoverOpacity,
             hardwareAcceleration: typeof payload.hardwareAcceleration === 'boolean' ? payload.hardwareAcceleration : current.hardwareAcceleration,
             clickThrough: typeof payload.clickThrough === 'boolean' ? payload.clickThrough : current.clickThrough,
+            mouseTracking: typeof payload.mouseTracking === 'boolean' ? payload.mouseTracking : (current.mouseTracking !== false),
+            trackingMode: typeof payload.trackingMode === 'string' ? payload.trackingMode : (current.trackingMode || 'auto'),
             // 保留显示档案
             displayProfiles: current.displayProfiles || {},
             // 保留上次使用的显示器
@@ -685,7 +856,18 @@ function setupIPC() {
         console.log('[Config] Saved');
         userConfig = merged;
         saveConfig(userConfig);
+
+        if (typeof payload.clickThrough === 'boolean') {
+            isClickThrough = payload.clickThrough;
+            if (mainWindow) {
+                mainWindow.setIgnoreMouseEvents(isClickThrough);
+                mainWindow.webContents.send('click-through-changed', isClickThrough);
+            }
+        }
+
         applyWindowSettings(targetFingerprint);
+        syncHoverDetection(); // autoHideOnHover 可能变化
+        applyHoverOpacity(cursorTracker ? cursorTracker.lastPosition : null);
         if (mainWindow && mainWindow.webContents) {
             mainWindow.webContents.send('config-updated', userConfig);
         }
@@ -699,7 +881,8 @@ function setupIPC() {
 app.whenReady().then(() => {
     userConfig = loadConfig();
     createMainWindow();
-    startMouseTracking();  // 启动全屏鼠标追踪
+    startMouseTracking();     // 启动眼球追踪（如已启用）
+    syncHoverDetection();      // 悬停透明检测（独立于追踪）
     createTray();
     setupDisplayListeners();
     setupIPC();
@@ -721,7 +904,11 @@ app.on('window-all-closed', () => {
 
 // 退出前清理
 app.on('before-quit', () => {
-    stopMouseTracking();
+    stopHoverDetection();
+    if (cursorTracker) {
+        cursorTracker.stop();
+        cursorTracker = null;
+    }
     if (tray) {
         tray.destroy();
     }

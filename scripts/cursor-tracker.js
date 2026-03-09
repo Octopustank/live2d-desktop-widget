@@ -40,6 +40,8 @@ class CursorTracker {
         this._method = 'unknown';
         this._retryTimer = null;
         this._startInterval = 50;
+        this._requestedMode = 'auto';
+        this._lastError = null;
 
         console.log(`[CursorTracker] Session: ${this.sessionType}, DE: ${this.desktopEnv}`);
 
@@ -84,18 +86,90 @@ class CursorTracker {
             sessionType: this.sessionType,
             desktopEnv: this.desktopEnv,
             trackingMethod: this._method,
-            isWayland: this.isWayland()
+            isWayland: this.isWayland(),
+            requestedMode: this._requestedMode,
+            lastError: this._lastError
         };
+    }
+
+    /**
+     * 探测当前系统可用的追踪模式
+     * 注意：此方法执行同步系统调用进行探测，可能需要数秒，仅在设置页面调用
+     */
+    getAvailableModes() {
+        const hasGjs = this._commandExists('gjs');
+        const hasGdbus = this._commandExists('gdbus');
+
+        return [
+            {
+                id: 'auto',
+                name: '自动检测',
+                available: true,
+                description: '根据系统环境自动选择最佳追踪方式'
+            },
+            {
+                id: 'electron',
+                name: 'Electron API',
+                available: true,
+                description: this.isWayland()
+                    ? '内置 API（Wayland 下仅窗口内有效）'
+                    : '内置 API（全屏追踪）'
+            },
+            {
+                id: 'gnome-extension',
+                name: 'GNOME Shell 扩展',
+                available: hasGjs && hasGdbus && this._isGnomeExtensionAvailable(),
+                description: '通过自定义 Shell 扩展获取光标（推荐）',
+                unavailableReason: !hasGjs ? 'gjs 未安装'
+                    : !hasGdbus ? 'gdbus 未安装'
+                    : '扩展未安装或未启用'
+            },
+            {
+                id: 'gnome-eval',
+                name: 'GNOME Shell.Eval',
+                available: hasGdbus && this._isShellEvalAvailable(),
+                description: '通过 Shell.Eval DBus（需旧版 GNOME 或开发者模式）',
+                unavailableReason: !hasGdbus ? 'gdbus 未安装' : 'Shell.Eval 被禁用'
+            },
+            {
+                id: 'kde-dbus',
+                name: 'KDE KWin DBus',
+                available: hasGdbus && this._isKdeAvailable(),
+                description: '通过 KWin DBus 接口获取光标',
+                unavailableReason: !hasGdbus ? 'gdbus 未安装' : 'KWin 服务不可用'
+            },
+            {
+                id: 'hyprland',
+                name: 'Hyprland (hyprctl)',
+                available: this._commandExists('hyprctl'),
+                description: '通过 hyprctl 命令获取光标',
+                unavailableReason: 'hyprctl 未找到'
+            },
+            {
+                id: 'ydotool',
+                name: 'ydotool',
+                available: this._commandExists('ydotool'),
+                description: '通用方案（需要 ydotoold 守护进程）',
+                unavailableReason: 'ydotool 未安装'
+            }
+        ];
     }
 
     /**
      * 启动光标追踪
      * @param {number} interval - 轮询间隔（毫秒），X11 建议 16ms (60FPS)，Wayland 建议 50ms (20FPS)
      */
-    start(interval = 50) {
+    start(interval = 50, mode = 'auto') {
         if (this._started) return;
         this._started = true;
         this._startInterval = interval;
+        this._requestedMode = mode;
+        this._lastError = null;
+
+        if (mode !== 'auto') {
+            this._startSpecificMode(interval, mode);
+            return;
+        }
 
         if (this.sessionType !== 'wayland') {
             this._startElectronTracking(interval);
@@ -141,11 +215,12 @@ class CursorTracker {
      * 重启光标追踪（用于切换追踪方式或扩展延迟加载后重连）
      * @param {number} [interval] - 可选的新轮询间隔
      */
-    restart(interval) {
+    restart(interval, mode) {
         const useInterval = interval || this._startInterval || 50;
-        console.log(`[CursorTracker] Restarting (interval: ${useInterval}ms)...`);
+        const useMode = mode !== undefined ? mode : this._requestedMode || 'auto';
+        console.log(`[CursorTracker] Restarting (interval: ${useInterval}ms, mode: ${useMode})...`);
         this.stop();
-        this.start(useInterval);
+        this.start(useInterval, useMode);
     }
 
     /**
@@ -187,6 +262,90 @@ class CursorTracker {
         } catch (e) {
             return false;
         }
+    }
+
+    // ==================== 指定模式启动 ====================
+
+    /**
+     * 以指定模式启动追踪
+     * 如果指定模式失败，回退到 Electron API 并记录错误
+     */
+    _startSpecificMode(interval, mode) {
+        console.log(`[CursorTracker] Starting with specific mode: ${mode}`);
+
+        switch (mode) {
+            case 'electron':
+                this._startElectronTracking(interval);
+                // 用户明确选择，不标记为 fallback
+                this._method = 'electron';
+                return;
+
+            case 'gnome-extension':
+                if (!this._commandExists('gjs')) {
+                    this._lastError = 'gjs 未安装，请安装 gjs 包';
+                    break;
+                }
+                if (!this._isGnomeExtensionAvailable()) {
+                    this._lastError = 'GNOME Shell 扩展未安装或未启用。请按 README 说明安装 cursor-tracker@live2d-desktop 扩展';
+                    break;
+                }
+                if (this._startGjsHelper(interval, 'extension')) return;
+                this._lastError = 'GJS 辅助进程启动失败';
+                break;
+
+            case 'gnome-eval':
+                if (!this._commandExists('gjs')) {
+                    this._lastError = 'gjs 未安装';
+                    break;
+                }
+                if (!this._isShellEvalAvailable()) {
+                    this._lastError = 'GNOME Shell.Eval 不可用（GNOME 45+ 默认禁用此方法）';
+                    break;
+                }
+                if (this._startGjsHelper(interval, 'eval')) return;
+                this._lastError = 'GJS 辅助进程启动失败';
+                break;
+
+            case 'kde-dbus':
+                if (!this._commandExists('gdbus')) {
+                    this._lastError = 'gdbus 未安装';
+                    break;
+                }
+                if (!this._isKdeAvailable()) {
+                    this._lastError = 'KDE KWin DBus 服务不可用。确认正在使用 KDE Plasma 桌面';
+                    break;
+                }
+                if (this._startKdeTracking(interval)) return;
+                this._lastError = 'KDE DBus 追踪启动失败';
+                break;
+
+            case 'hyprland':
+                if (!this._commandExists('hyprctl')) {
+                    this._lastError = 'hyprctl 未找到。确认正在使用 Hyprland';
+                    break;
+                }
+                if (this._startHyprlandTracking(interval)) return;
+                this._lastError = 'hyprctl 追踪启动失败';
+                break;
+
+            case 'ydotool':
+                if (!this._commandExists('ydotool')) {
+                    this._lastError = 'ydotool 未安装';
+                    break;
+                }
+                if (this._startYdotoolTracking(interval)) return;
+                this._lastError = 'ydotool 追踪启动失败';
+                break;
+
+            default:
+                this._lastError = `未知的追踪模式: ${mode}`;
+                break;
+        }
+
+        // 指定模式失败，回退到 Electron API
+        console.warn(`[CursorTracker] Mode '${mode}' failed: ${this._lastError}`);
+        console.warn('[CursorTracker] Falling back to Electron API');
+        this._startElectronTracking(interval);
     }
 
     // ==================== X11 / Electron 回退 ====================
@@ -336,6 +495,22 @@ class CursorTracker {
                 { timeout: 2000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
             );
             return result.includes('true');
+        } catch (e) {
+            return false;
+        }
+    }
+
+    /**
+     * 检查 KDE KWin DBus 是否可用
+     */
+    _isKdeAvailable() {
+        try {
+            const result = execSync(
+                'gdbus call --session --dest org.kde.KWin ' +
+                '--object-path /KWin --method org.kde.KWin.cursorPos',
+                { timeout: 2000, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+            );
+            return /\d+/.test(result);
         } catch (e) {
             return false;
         }
@@ -652,40 +827,43 @@ new GLib.MainLoop(null, false).run();
 
     // ==================== 通用 Wayland 回退 ====================
 
-    _startGenericWaylandFallback(interval) {
-        // 尝试 ydotool（需要 ydotoold 守护进程运行）
-        if (this._commandExists('ydotool')) {
-            this._method = 'ydotool';
-            const pollInterval = Math.max(interval, 80);
-            console.log(`[CursorTracker] Using ydotool (${pollInterval}ms)`);
+    _startYdotoolTracking(interval) {
+        this._method = 'ydotool';
+        const pollInterval = Math.max(interval, 80);
+        console.log(`[CursorTracker] Using ydotool (${pollInterval}ms)`);
 
-            let pending = false;
-            this._interval = setInterval(() => {
-                if (pending) return;
-                pending = true;
+        let pending = false;
+        this._interval = setInterval(() => {
+            if (pending) return;
+            pending = true;
 
-                try {
-                    const proc = spawn('ydotool', ['getmouselocation'], {
-                        stdio: ['ignore', 'pipe', 'ignore']
-                    });
+            try {
+                const proc = spawn('ydotool', ['getmouselocation'], {
+                    stdio: ['ignore', 'pipe', 'ignore']
+                });
 
-                    let out = '';
-                    proc.stdout.on('data', (d) => out += d.toString());
-                    proc.on('close', () => {
-                        pending = false;
-                        const m = out.match(/x:(-?\d+)\s+y:(-?\d+)/);
-                        if (m) this._notify(parseInt(m[1], 10), parseInt(m[2], 10));
-                    });
-                    proc.on('error', () => { pending = false; });
-                } catch (e) {
+                let out = '';
+                proc.stdout.on('data', (d) => out += d.toString());
+                proc.on('close', () => {
                     pending = false;
-                }
-            }, pollInterval);
+                    const m = out.match(/x:(-?\d+)\s+y:(-?\d+)/);
+                    if (m) this._notify(parseInt(m[1], 10), parseInt(m[2], 10));
+                });
+                proc.on('error', () => { pending = false; });
+            } catch (e) {
+                pending = false;
+            }
+        }, pollInterval);
 
+        return true;
+    }
+
+    _startGenericWaylandFallback(interval) {
+        if (this._commandExists('ydotool')) {
+            this._startYdotoolTracking(interval);
             return;
         }
 
-        // 最终回退: Electron API（在 Wayland 上仅限窗口内）
         console.warn('[CursorTracker] No Wayland cursor method found, falling back to Electron API');
         this._startElectronTracking(interval);
     }

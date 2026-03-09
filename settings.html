@@ -357,38 +357,55 @@
             </label>
             <div class="muted">如果遇到兼容性问题，可以尝试关闭此选项并重启应用。</div>
 
-            <!-- 高级：鼠标追踪 -->
+            <!-- 鼠标追踪 -->
             <h2>🖱️ 鼠标追踪</h2>
-            <div class="section">
-                <div class="section-title">追踪状态</div>
-                <div class="display-info" id="tracking-info">
-                    <div class="row-info">
-                        <span class="label">显示服务器：</span>
-                        <span class="value" id="info-session">检测中...</span>
+
+            <label class="checkbox-label">
+                <input id="tracking-enabled" type="checkbox" checked>
+                <span>启用眼球追踪</span>
+            </label>
+            <div class="muted">启用后，模型眼球跟随鼠标移动。关闭可节省系统资源。</div>
+
+            <div id="tracking-options">
+                <label for="tracking-mode">追踪模式</label>
+                <div class="inline-action">
+                    <select id="tracking-mode">
+                        <option value="auto">自动检测</option>
+                    </select>
+                    <button type="button" id="btn-apply-tracking">应用</button>
+                </div>
+                <div class="muted" id="tracking-mode-desc">根据系统环境自动选择最佳追踪方式。</div>
+
+                <div class="section" style="margin-top: 12px;">
+                    <div class="section-title">当前状态</div>
+                    <div class="display-info" id="tracking-info">
+                        <div class="row-info">
+                            <span class="label">显示服务器：</span>
+                            <span class="value" id="info-session">检测中...</span>
+                        </div>
+                        <div class="row-info">
+                            <span class="label">桌面环境：</span>
+                            <span class="value" id="info-de">检测中...</span>
+                        </div>
+                        <div class="row-info">
+                            <span class="label">请求模式：</span>
+                            <span class="value" id="info-requested-mode">-</span>
+                        </div>
+                        <div class="row-info">
+                            <span class="label">实际方式：</span>
+                            <span class="value" id="info-method">检测中...</span>
+                        </div>
+                        <div class="row-info">
+                            <span class="label">全屏追踪：</span>
+                            <span class="value" id="info-fullscreen">检测中...</span>
+                        </div>
                     </div>
-                    <div class="row-info">
-                        <span class="label">桌面环境：</span>
-                        <span class="value" id="info-de">检测中...</span>
-                    </div>
-                    <div class="row-info">
-                        <span class="label">追踪方式：</span>
-                        <span class="value" id="info-method">检测中...</span>
-                    </div>
-                    <div class="row-info">
-                        <span class="label">全屏追踪：</span>
-                        <span class="value" id="info-fullscreen">检测中...</span>
+                    <div id="tracking-warning" style="display: none;">
+                        <div class="tracking-alert" id="tracking-warning-msg">
+                            ⚠️ 当前全屏鼠标追踪不可用。
+                        </div>
                     </div>
                 </div>
-                <div id="tracking-warning" style="display: none;">
-                    <div class="tracking-alert">
-                        ⚠️ 当前全屏鼠标追踪不可用。模型眼球仅在窗口内跟随光标。
-                    </div>
-                    <div class="muted" style="margin-top: 8px;">
-                        Wayland 安全模型限制了跨窗口光标获取。<br>
-                        GNOME 用户请安装随附的 Shell 扩展以启用全屏追踪，详见 README。
-                    </div>
-                </div>
-                <button type="button" id="btn-recheck-tracking" style="margin-top: 8px; width: 100%;">重新检测</button>
             </div>
 
             <!-- 操作按钮 -->
